@@ -1,0 +1,18 @@
+{
+  "mcpServers": {
+    "filesystem": {
+      "command": "npx.cmd",
+      "args": [
+        "-y",
+        "@modelcontextprotocol/server-filesystem",
+        "C:\\Users\\Lenovo\\Desktop\\nongpi-ddd-springai-platform\\ai\\src\\main\\resources\\document"
+      ]
+    },
+    "weather": {
+      "command": "node",
+      "args": [
+        "C:\\Users\\Lenovo\\Desktop\\nongpi-ddd-springai-platform\\ai\\src\\main\\resources\\mcp\\weather-mcp-server.js"
+      ]
+    }
+  }
+}

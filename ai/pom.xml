@@ -1,0 +1,91 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project xmlns="http://maven.apache.org/POM/4.0.0"
+         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 https://maven.apache.org/xsd/maven-4.0.0.xsd">
+    <modelVersion>4.0.0</modelVersion>
+
+    <parent>
+        <groupId>com.nongpi.fulfillment</groupId>
+        <artifactId>nongpi-fulfillment</artifactId>
+        <version>0.0.1-SNAPSHOT</version>
+    </parent>
+
+    <artifactId>ai</artifactId>
+    <name>ai</name>
+    <description>农批履约中台 — AI 智能客服模块（Spring AI 1.1.x）</description>
+
+    <dependencies>
+        <!-- 模块内部依赖 -->
+        <dependency>
+            <groupId>com.nongpi.fulfillment</groupId>
+            <artifactId>common</artifactId>
+            <version>${project.version}</version>
+        </dependency>
+        <dependency>
+            <groupId>com.nongpi.fulfillment</groupId>
+            <artifactId>lot</artifactId>
+            <version>${project.version}</version>
+        </dependency>
+        <dependency>
+            <groupId>com.nongpi.fulfillment</groupId>
+            <artifactId>inventory</artifactId>
+            <version>${project.version}</version>
+        </dependency>
+        <dependency>
+            <groupId>com.nongpi.fulfillment</groupId>
+            <artifactId>alert</artifactId>
+            <version>${project.version}</version>
+        </dependency>
+
+        <!-- Spring AI — OpenAI 兼容协议（通义千问 / 日日新 / Ollama 均兼容） -->
+        <dependency>
+            <groupId>org.springframework.ai</groupId>
+            <artifactId>spring-ai-starter-model-openai</artifactId>
+        </dependency>
+
+        <!-- P2: RAG — PGVector 向量存储 + Spring AI RAG advisor -->
+        <dependency>
+            <groupId>org.springframework.ai</groupId>
+            <artifactId>spring-ai-pgvector-store</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>org.springframework.ai</groupId>
+            <artifactId>spring-ai-rag</artifactId>
+        </dependency>
+        <!-- PGVector 容器 JDBC 驱动 -->
+        <dependency>
+            <groupId>org.postgresql</groupId>
+            <artifactId>postgresql</artifactId>
+            <scope>runtime</scope>
+        </dependency>
+
+        <!-- P4 阶段追加: spring-ai-starter-mcp-client + spring-ai-starter-mcp-server-webmvc -->
+        <!-- P4-MCP Client 最小版：消费外部 MCP server（filesystem），证明 MCP 协议接入能力 -->
+        <dependency>
+            <groupId>org.springframework.ai</groupId>
+            <artifactId>spring-ai-starter-mcp-client</artifactId>
+        </dependency>
+
+        <!-- Web MVC（SSE 流式输出需要） -->
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-starter-web</artifactId>
+        </dependency>
+
+        <!-- reactor-netty-http — Spring AI ChatClient.stream() 用 WebClient 调 LLM 流式 API，
+             WebClient 的 HTTP client 实现来自 reactor-netty。spring-ai-starter-model-openai 只传递
+             spring-webflux 接口，不含 reactor-netty 实现，导致 .stream() 的 Flux 静默挂死
+             （.call() 同步用 RestClient 不受影响）。版本由 spring-boot-dependencies BOM 管理。 -->
+        <dependency>
+            <groupId>io.projectreactor.netty</groupId>
+            <artifactId>reactor-netty-http</artifactId>
+        </dependency>
+
+        <!-- Lombok -->
+        <dependency>
+            <groupId>org.projectlombok</groupId>
+            <artifactId>lombok</artifactId>
+            <optional>true</optional>
+        </dependency>
+    </dependencies>
+</project>
