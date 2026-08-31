@@ -1,0 +1,169 @@
+package com.nongpi.fulfillment.lot.infrastructure;
+
+import com.nongpi.fulfillment.lot.application.LotAppService.OutboundCommand;
+import com.nongpi.fulfillment.lot.application.LotAppService.LotOutboundResult;
+import com.nongpi.fulfillment.lot.domain.*;
+import com.nongpi.fulfillment.common.domain.LotStatus;
+import com.nongpi.fulfillment.common.exception.BusinessException;
+import com.nongpi.fulfillment.common.infrastructure.util.TransactionUtils;
+import com.nongpi.fulfillment.inventory.infrastructure.mapper.InventoryMapper;
+import com.nongpi.fulfillment.lot.infrastructure.config.RedissonConfig;
+import org.redisson.api.RLock;
+import org.redisson.api.RedissonClient;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
+
+import java.math.BigDecimal;
+import java.util.ArrayList;
+import java.util.List;
+import java.util.concurrent.TimeUnit;
+
+/**
+ * 出库编排服务 — 基于 FEFO 策略和 Redisson 分布式锁
+ *
+ * <p>执行流程：
+ * <ol>
+ *   <li>调用 {@link FefoCache#getEarliest} 获取需要出库的批次列表</li>
+ *   <li>对每个批次获取分布式锁 {@code lock:lot:{lotNo}}</li>
+ *   <li>加载聚合根、执行出库、保存（领域事件写入 Outbox）</li>
+ *   <li>批次出清后通过 {@link TransactionSynchronization} 异步更新 Redis ZSet</li>
+ * </ol>
+ * </p>
+ */
+@Service
+public class OutboundService {
+
+    private static final Logger log = LoggerFactory.getLogger(OutboundService.class);
+
+    private static final String LOCK_KEY_PREFIX = "lock:lot:";
+
+    private final ILotRepository repository;
+    private final FefoCache fefoCache;
+    private final RedissonClient redissonClient;
+    private final RedissonConfig redissonConfig;
+    private final InventoryMapper inventoryMapper;
+
+    public OutboundService(ILotRepository repository,
+                           FefoCache fefoCache,
+                           RedissonClient redissonClient,
+                           RedissonConfig redissonConfig,
+                           InventoryMapper inventoryMapper) {
+        this.repository = repository;
+        this.fefoCache = fefoCache;
+        this.redissonClient = redissonClient;
+        this.redissonConfig = redissonConfig;
+        this.inventoryMapper = inventoryMapper;
+    }
+
+    /**
+     * 执行出库 — FEFO 策略，逐批加锁出库直到凑够数量
+     *
+     * @param cmd 出库命令
+     * @return 出库结果
+     */
+    @Transactional(rollbackFor = Exception.class)
+    public LotOutboundResult execute(OutboundCommand cmd) {
+        // 1. 获取 FEFO 批次列表
+        List<LotNo> lotNos = fefoCache.getEarliest(cmd.tempZone(), cmd.qty());
+
+        // 2. 逐批出库
+        BigDecimal remaining = cmd.qty();//全局遍历，用于下次出库判断是否满足条件
+        BigDecimal totalOut = BigDecimal.ZERO;
+        LotStatus finalStatus = null;
+        String finalLotNo = null;
+        List<String> fullyOutLotNos = new ArrayList<>();
+
+        for (LotNo lotNo : lotNos) {
+            // 获取分布式锁
+            RLock lock = redissonClient.getLock(LOCK_KEY_PREFIX + lotNo.value());
+            try {
+                boolean locked = lock.tryLock(
+                        redissonConfig.getLockWaitTime(),
+                        redissonConfig.getLockLeaseTime(),
+                        TimeUnit.MILLISECONDS
+                );
+                if (!locked) {
+                    log.warn("获取批次锁失败，跳过: {}", lotNo.value());
+                    continue;
+                }
+
+                try {
+                    // 3. 加载聚合根
+                    Lot lot = repository.getById(lotNo)
+                            .orElseThrow(() -> new IllegalArgumentException("批次不存在: " + lotNo));
+
+                    // 4. 计算本次出库数量
+                    BigDecimal outQty = remaining.min(lot.getRemainingQty());
+
+                    // 5. 执行出库
+                    lot.outbound(outQty, cmd.toLocation());
+
+                    // 6. 保存（事务内只做 DB，Redis/库存同步放事务后）
+                    repository.update(lot);
+
+                    // 7. 记录出清批次，待事务提交后清理 Redis
+                    if (lot.getStatus() == LotStatus.FULLY_OUT) {
+                        fullyOutLotNos.add(lot.getLotNo().value());
+                    }
+
+                    totalOut = totalOut.add(outQty);
+                    remaining = remaining.subtract(outQty);
+                    finalStatus = lot.getStatus();
+                    finalLotNo = lot.getLotNo().value();
+
+                    // 8. 如果已凑够数量，停止
+                    if (remaining.compareTo(BigDecimal.ZERO) <= 0) {
+                        break;
+                    }
+                } finally {
+                    if (lock.isHeldByCurrentThread()) {
+                        lock.unlock();
+                    }
+                }
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+                throw new RuntimeException("出库操作被中断", e);
+            }
+        }
+
+        if (totalOut.compareTo(BigDecimal.ZERO) == 0) {
+            throw new NoAvailableLotException("无法完成出库：所有批次加锁失败或无可用批次");
+        }
+
+        // 9. 事务内原子扣减库存（DB WHERE 条件防超卖，无需 @Retryable）
+        // (total_qty - frozen_qty) >= ? 在 DB 层校验可用量，避免 TOCTOU 竞态
+        int affected = inventoryMapper.decreaseStock(cmd.skuId(), cmd.tempZone().name(), totalOut);
+        if (affected == 0) {
+            throw new BusinessException(422, "INSUFFICIENT_QTY",
+                    "可用库存不足：出库 " + totalOut + "，SKU=" + cmd.skuId() + " 温区=" + cmd.tempZone());
+        }
+
+        // 10. 事务提交后清理已出清批次的 Redis ZSet（Redis 资源，崩溃由 Outbox+MQ 消费者补偿）
+        registerPostCommit(() -> {
+            for (String lotNo : fullyOutLotNos) {
+                try {
+                    fefoCache.removeLot(lotNo);
+                } catch (Exception e) {
+                    log.error("Redis 移除 FEFO 缓存失败，批次 {}", lotNo, e);
+                }
+            }
+        });
+
+        return new LotOutboundResult(
+                finalLotNo,
+                totalOut,
+                BigDecimal.ZERO.max(remaining), // 剩余未出库数量
+                finalStatus
+        );
+    }
+
+    /**
+     * 注册事务提交后的回调（Redis 等非 DB 操作放事务外执行）
+     * <p>统一收敛到 {@link TransactionUtils#registerPostCommit}，避免多份复制。</p>
+     */
+    private void registerPostCommit(Runnable action) {
+        TransactionUtils.registerPostCommit(action);
+    }
+}

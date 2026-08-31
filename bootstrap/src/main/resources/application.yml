@@ -1,0 +1,121 @@
+server:
+  port: 8080
+
+spring:
+  application:
+    name: nongpi-fulfillment
+  profiles:
+    active: local
+
+  # Spring 虚拟线程配置（为 SSE 提供非阻塞虚拟线程池）
+  threads:
+    virtual:
+      enabled: true
+
+  # Spring AI 配置 — OpenAI 兼容协议（Ollama / 通义千问 / 日日新）
+  ai:
+    openai:
+      api-key: ${LLM_API_KEY:ollama}
+      # 用 127.0.0.1 而非 localhost，显式 IPv4 避免解析歧义
+      base-url: ${LLM_BASE_URL:http://127.0.0.1:11434}
+      chat:
+        options:
+          model: ${LLM_MODEL:qwen2.5:3b}
+          temperature: 0.7
+      # P2: RAG 向量嵌入模型（bge-m3，1024 维），复用同一 Ollama 服务
+      embedding:
+        options:
+          model: ${EMBEDDING_MODEL:bge-m3}
+
+    # P4-MCP Client：消费外部 MCP server（filesystem），证明 MCP 协议接入能力
+    # 启动时自动拉起 npx 子进程，暴露 read_file/list_directory 等工具给 LLM
+    mcp:
+      client:
+        stdio:
+          servers-configuration: classpath:mcp-servers.json
+
+  # 主数据源（MySQL，业务数据）
+  datasource:
+    url: jdbc:mysql://localhost:3306/nongpi?useSSL=false&allowPublicKeyRetrieval=true&serverTimezone=Asia/Shanghai&characterEncoding=UTF-8
+    username: ${DB_USERNAME:root}
+    password: ${DB_PASSWORD:root}
+    driver-class-name: com.mysql.cj.jdbc.Driver
+
+  # Flyway 已禁用，表由 MCP 工具管理
+  flyway:
+    enabled: false
+
+  # RabbitMQ 配置
+  rabbitmq:
+    host: ${RABBITMQ_HOST:localhost}
+    port: ${RABBITMQ_PORT:5672}
+    username: ${RABBITMQ_USER:guest}
+    password: ${RABBITMQ_PASS:guest}
+    virtual-host: ${RABBITMQ_VHOST:/}
+    # 发布确认（Publisher Confirm）— 消息到达 Exchange 后回调
+    publisher-confirm-type: correlated
+    # 发布返回（Publisher Returns）— 消息找不到 Queue 时回调
+    publisher-returns: true
+    template:
+      # mandatory=true: 消息找不到 Queue 时抛异常而非静默丢弃
+      mandatory: true
+
+  # Redis 配置
+  data:
+    redis:
+      host: ${REDIS_HOST:localhost}
+      port: ${REDIS_PORT:6379}
+      password: ${REDIS_PASSWORD:}
+      timeout: 5000
+
+  # Jackson 序列化配置
+  jackson:
+    serialization:
+      write-dates-as-timestamps: false
+    date-format: yyyy-MM-dd
+    time-zone: Asia/Shanghai
+    default-property-inclusion: non_null
+
+# P2: PGVector 容器数据源（与主库 MySQL 隔离，仅存向量知识库）
+pgvector:
+  datasource:
+    url: ${PGVECTOR_URL:jdbc:postgresql://localhost:5433/honcho_memory}
+    username: ${PGVECTOR_USER:honcho}
+    password: ${PGVECTOR_PASSWORD:honcho_secret_2024}
+    driver-class-name: org.postgresql.Driver
+
+# MyBatis-Plus 配置
+mybatis-plus:
+  mapper-locations: classpath*:com/nongpi/fulfillment/**/mapper/*.xml,classpath*:com/nongpi/fulfillment/**/infrastructure/mapper/*.xml
+  type-aliases-package: com.nongpi.fulfillment
+  configuration:
+    map-underscore-to-camel-case: true
+    log-impl: org.apache.ibatis.logging.stdout.StdOutImpl
+
+# Redisson 分布式锁配置
+redisson:
+  lock:
+    wait-time: 5000
+    lease-time: 10000
+
+# 文件上传
+file:
+  upload-path: ./uploads
+
+# JWT 鉴权配置
+jwt:
+  secret: ${JWT_SECRET:nongpi-fulfillment-secret-key-change-in-production-2026}
+  expiration-minutes: ${JWT_EXPIRATION_MINUTES:120}
+
+---
+spring:
+  config:
+    activate:
+      on-profile: local
+
+  datasource:
+    url: jdbc:mysql://localhost:3306/nongpi?useSSL=false&allowPublicKeyRetrieval=true&serverTimezone=Asia/Shanghai&characterEncoding=UTF-8
+
+logging:
+  level:
+    com.nongpi.fulfillment: DEBUG
