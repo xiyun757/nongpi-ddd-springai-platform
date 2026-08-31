@@ -1,8 +1,8 @@
 ### CUSTOM ###
 application-local.yml
-/src/main/java/com/licanfu/ aiagent/demo/invoke/TestApiKey.java
+
 /tmp/*
-/src/main/resources/mcp-serversbf.json
+
 
 HELP.md
 target/
@@ -73,4 +73,7 @@ logs/
 # PROJECT_ARCH_MEMORY.md PROJECT_GUIDE.md：若你要把它们作为项目说明保留，就注释掉下面两行
 /PROJECT_ARCH_MEMORY.md
 /PROJECT_GUIDE.md
+
+### 个人备考材料（不入库）###
+/docs/面试核心知识点讲解准备清单.md
 
