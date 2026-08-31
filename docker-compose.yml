@@ -1,0 +1,16 @@
+services:
+  pgvector:
+    image: pgvector/pgvector:pg15
+    container_name: pgvector
+    environment:
+      POSTGRES_USER: honcho
+      POSTGRES_PASSWORD: honcho_secret_2024
+      POSTGRES_DB: honcho_memory
+    ports:
+      - "5433:5432"
+    volumes:
+      - pg_vector_honcho:/var/lib/postgresql/data
+    restart: unless-stopped
+
+volumes:
+  pg_vector_honcho:
