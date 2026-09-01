@@ -1,5 +1,6 @@
 package com.nongpi.fulfillment;
 
+import org.apache.ibatis.annotations.Mapper;
 import org.mybatis.spring.annotation.MapperScan;
 import org.springframework.boot.SpringApplication;
 import org.springframework.boot.autoconfigure.SpringBootApplication;
@@ -10,7 +11,7 @@ import org.springframework.scheduling.annotation.EnableScheduling;
  * 农批履约中台 — 主启动类。
  * <p>
  * 通过 {@code @ComponentScan("com.nongpi.fulfillment")} 扫描所有子模块包，
- * {@code @MapperScan("com.nongpi.fulfillment")} 扫描所有 MyBatis Mapper 接口，
+ * {@code @MapperScan(basePackages = "com.nongpi.fulfillment", annotationClass = Mapper.class)} 扫描所有 MyBatis Mapper 接口，
  * {@code @EnableScheduling} 开启定时任务。
  * </p>
  */
