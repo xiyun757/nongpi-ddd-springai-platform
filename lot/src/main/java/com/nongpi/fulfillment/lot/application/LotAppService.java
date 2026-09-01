@@ -45,6 +45,7 @@ public class LotAppService {
     private final LotTransferMapper lotTransferMapper;
     private final RedissonClient redissonClient;
     private final RedissonConfig redissonConfig;
+    private final com.nongpi.fulfillment.sku.domain.ISkuRepository skuRepository;
 
     private static final String LOCK_KEY_PREFIX = "lock:lot:";
 
@@ -62,7 +63,8 @@ public class LotAppService {
                          InventoryMapper inventoryMapper,
                          LotTransferMapper lotTransferMapper,
                          RedissonClient redissonClient,
-                         RedissonConfig redissonConfig) {
+                         RedissonConfig redissonConfig,
+                         com.nongpi.fulfillment.sku.domain.ISkuRepository skuRepository) {
         this.repository = repository;
         this.fefoCache = fefoCache;
         this.outboundService = outboundService;
@@ -70,6 +72,7 @@ public class LotAppService {
         this.lotTransferMapper = lotTransferMapper;
         this.redissonClient = redissonClient;
         this.redissonConfig = redissonConfig;
+        this.skuRepository = skuRepository;
     }
 
     /**
@@ -88,8 +91,15 @@ public class LotAppService {
     OutboxMessageRelay 每 2 秒扫描 PENDING 事件，标记 IN_FLIGHT + in_flight_at=now 后发 RabbitMQ，基于 Publisher Confirm 驱动状态机：ack 标记 PUBLISHED，nack 重试 3 次超限进死信，IN_FLIGHT 超 30 秒自动恢复 PENDING 重投（防应用崩溃丢消息）。
 
     消费者收到消息先写 t_mq_consume_log 唯一键幂等去重，再 fefoCache.addLot 补偿更新缓存，失败抛 AmqpRejectAndDontRequeueException 路由到死信队列。这样 FEFO 缓存有双写保证——直接调用快但不可靠，MQ 补偿慢但可靠，崩溃时消费者把缺失的缓存补上。
-    */@Transactional(rollbackFor = Exception.class)
+     */
+    @Transactional(rollbackFor = Exception.class)
     public Lot inbound(InboundCommand cmd) {
+        // 0. 主数据校验：skuId 必须存在于 t_sku（主数据 → 交易数据闭环）
+        if (!skuRepository.existsById(cmd.skuId())) {
+            throw new BusinessException(422, "SKU_NOT_FOUND",
+                    "商品不存在：skuId=" + cmd.skuId() + "，请先在商品管理中创建该 SKU");
+        }
+
         Lot lot = null;
         for (int i = 0; i < LOT_NO_GENERATE_MAX_RETRY; i++) {
             LotNo lotNo = LotNo.generate(String.valueOf(cmd.supplierId()));
@@ -274,12 +284,15 @@ public class LotAppService {
 
     /**
      * 出库命令
+     *
+     * @param lotNo      指定批次号（非空=指定批次直接出库；空=FEFO 自动选最早过期批次）
      */
     public record OutboundCommand(
             Long skuId,
             TempZone tempZone,
             BigDecimal qty,
-            String toLocation
+            String toLocation,
+            String lotNo
     ) {}
 
     /**
