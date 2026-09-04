@@ -10,9 +10,16 @@ import com.nongpi.fulfillment.lot.infrastructure.mapper.LotMapper;
 import com.nongpi.fulfillment.lot.infrastructure.mapper.LotTransferMapper;
 import com.nongpi.fulfillment.lot.infrastructure.persistence.LotPO;
 import com.nongpi.fulfillment.lot.infrastructure.persistence.LotTransferPO;
+import com.nongpi.fulfillment.sku.infrastructure.mapper.SkuMapper;
+import com.nongpi.fulfillment.sku.infrastructure.persistence.SkuPO;
 import org.springframework.stereotype.Service;
 
 import java.util.List;
+import java.util.Map;
+import java.util.Objects;
+import java.util.Set;
+import java.util.function.Function;
+import java.util.stream.Collectors;
 
 /**
  * 批次查询服务 — 应用层
@@ -30,10 +37,13 @@ public class LotQueryService {
 
     private final LotMapper lotMapper;
     private final LotTransferMapper lotTransferMapper;
+    private final SkuMapper skuMapper;
 
-    public LotQueryService(LotMapper lotMapper, LotTransferMapper lotTransferMapper) {
+    public LotQueryService(LotMapper lotMapper, LotTransferMapper lotTransferMapper,
+                           SkuMapper skuMapper) {
         this.lotMapper = lotMapper;
         this.lotTransferMapper = lotTransferMapper;
+        this.skuMapper = skuMapper;
     }
 
     public IPage<LotResponse> list(Long skuId, String tempZone, String status, String lotNo,
@@ -54,7 +64,9 @@ public class LotQueryService {
         wrapper.orderByDesc(LotPO::getLotNo);
 
         Page<LotPO> poPage = lotMapper.selectPage(new Page<>(page, size), wrapper);
-        return poPage.convert(LotResponse::fromPO);
+        // 批量查 SKU 名（一次 IN 查询），主数据 → 交易数据关联展示
+        Map<Long, String> skuNames = loadSkuNames(poPage.getRecords());
+        return poPage.convert(po -> LotResponse.fromPO(po, skuNames.get(po.getSkuId())));
     }
 
     public LotResponse getDetail(String lotNo) {
@@ -62,7 +74,23 @@ public class LotQueryService {
         if (po == null) {
             throw new NotFoundException("批次 " + lotNo + " 不存在");
         }
-        return LotResponse.fromPO(po);
+        Map<Long, String> skuNames = loadSkuNames(List.of(po));
+        return LotResponse.fromPO(po, skuNames.get(po.getSkuId()));
+    }
+
+    /**
+     * 批量加载 SKU 名（skuId → 名称）。SKU 已删除时返回 null，前端显示 skuId 兜底。
+     */
+    private Map<Long, String> loadSkuNames(List<LotPO> lots) {
+        Set<Long> skuIds = lots.stream()
+                .map(LotPO::getSkuId)
+                .filter(Objects::nonNull)
+                .collect(Collectors.toSet());
+        if (skuIds.isEmpty()) {
+            return Map.of();
+        }
+        return skuMapper.selectBatchIds(skuIds).stream()
+                .collect(Collectors.toMap(SkuPO::getId, SkuPO::getName, (a, b) -> a));
     }
 
     /**

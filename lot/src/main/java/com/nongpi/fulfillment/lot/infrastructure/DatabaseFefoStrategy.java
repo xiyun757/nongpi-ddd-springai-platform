@@ -27,15 +27,17 @@ public class DatabaseFefoStrategy implements FefoStrategy {
     }
 
     @Override
-    public List<LotNo> getEarliest(TempZone zone, BigDecimal qty) {
+    public List<LotNo> getEarliest(TempZone zone, BigDecimal qty, Long skuId) {
         LocalDate today = LocalDate.now();
+        //candidates符合要求的批次集合
         List<Lot> candidates = repository.findByTempZoneAndExpireDateBefore(zone, today.plusDays(FALLBACK_DAYS))
                 .stream()
                 .filter(l -> l.getStatus() == LotStatus.IN_STOCK
                         || l.getStatus() == LotStatus.PARTIAL_OUT)
+                .filter(l -> skuId == null || java.util.Objects.equals(l.getSkuId(), skuId))
                 .filter(l -> !l.getExpireDate().isBefore(today))
                 .toList();
-
+        //accumulated一开始为0，直到满足出库条件（accumulated.compareTo(qty) >= 0
         BigDecimal accumulated = BigDecimal.ZERO;
         List<LotNo> result = new ArrayList<>();
         for (Lot lot : candidates) {

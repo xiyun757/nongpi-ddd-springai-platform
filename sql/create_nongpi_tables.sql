@@ -94,5 +94,5 @@ CREATE TABLE IF NOT EXISTS t_mq_consume_log (
     message_id VARCHAR(64) NOT NULL COMMENT '消息唯一ID（等于领域事件ID）',
     consumer VARCHAR(64) NOT NULL COMMENT '消费者名称',
     consumed_at DATETIME NOT NULL COMMENT '消费时间',
-    PRIMARY KEY (message_id)
+    PRIMARY KEY (message_id, consumer)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='MQ消费幂等日志表';

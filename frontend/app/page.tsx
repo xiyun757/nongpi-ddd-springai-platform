@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import gsap from 'gsap';
 import AuthGuard from '@/components/AuthGuard';
@@ -33,6 +33,7 @@ import {
   fetchInventoryForChart,
   fetchTop5Alerts,
   TEMP_ZONE_LABEL,
+  InventoryItem,
 } from '@/lib/api';
 import {
   SkeletonStatCard,
@@ -150,6 +151,8 @@ function DashboardInner() {
   const { data: inventory, isLoading: l4 } = useQuery({
     queryKey: ['inventory', 'chart'],
     queryFn: fetchInventoryForChart,
+    // 后台重取/聚焦刷新时保留旧数据，避免饼图区域闪「暂无数据」空态
+    placeholderData: (prev: InventoryItem[] | undefined) => prev,
   });
 
   const { data: topAlerts, isLoading: l5 } = useQuery({
@@ -160,8 +163,9 @@ function DashboardInner() {
   // 饼图 hover 高亮 — 跟踪激活扇区索引，未悬停时 undefined（Recharts 不渲染 activeShape）
   const [activeIndex, setActiveIndex] = useState<number | null>(null);
 
-  // 聚合温区分布
-  const zoneData = (() => {
+  // 聚合温区分布 — useMemo 稳定数据引用，避免每次渲染都换新数组，
+  // 否则 Recharts <Pie data={...}> 检测到引用变化会重放入场动画（hover 一下整个饼重播，卡顿）
+  const zoneData = useMemo(() => {
     if (!inventory || inventory.length === 0) return [];
     const m = new Map<string, number>();
     for (const r of inventory) {
@@ -172,7 +176,7 @@ function DashboardInner() {
       value: qty,
       color: TEMP_ZONE_COLOR[tempZone] ?? '#94a3b8',
     }));
-  })();
+  }, [inventory]);
 
   const anyLoading = l1 || l2 || l3 || l4 || l5;
 
@@ -228,7 +232,11 @@ function DashboardInner() {
             <CardTitle className="text-base font-semibold">温区库存分布</CardTitle>
           </CardHeader>
           <CardContent>
-            {zoneData.length === 0 ? (
+            {l4 && !inventory ? (
+              <div className="h-[300px] flex items-center justify-center text-sm text-muted-foreground">
+                加载中...
+              </div>
+            ) : zoneData.length === 0 ? (
               <div className="h-[300px] flex items-center justify-center">
                 <EmptyState icon="📊" message="暂无库存数据" />
               </div>
@@ -242,6 +250,9 @@ function DashboardInner() {
                     cx="50%"
                     cy="50%"
                     outerRadius={90}
+                    isAnimationActive
+                    animationDuration={500}
+                    animationEasing="ease-out"
                     onMouseEnter={(_, i) => setActiveIndex(i)}
                     onMouseLeave={() => setActiveIndex(null)}
                     label={(entry: { name?: string; percent?: number }) =>

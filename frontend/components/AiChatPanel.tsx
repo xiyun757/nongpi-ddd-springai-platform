@@ -42,7 +42,7 @@ export function AiChatPanel({ mode }: AiChatPanelProps) {
   }, []);
 
   // chatId — 存 localStorage（按用户名+模式区分），刷新页面后复用同一 chatId，
-  // 配合 Redis ChatMemory 持久化恢复历史对话。manus 无多轮记忆，不存。
+  // 配合 Redis 持久化恢复历史对话（chat/rag 走 ChatMemory，manus 走独立 Redis key）
   const chatIdKey = `chatId:${user?.username ?? 'anon'}:${mode}`;
   const chatIdRef = useRef('');
 
@@ -50,12 +50,15 @@ export function AiChatPanel({ mode }: AiChatPanelProps) {
   // 这是"从外部数据源恢复状态"的标准 effect 用法，非 set-state-in-effect 误用
   /* eslint-disable react-hooks/set-state-in-effect */
   useEffect(() => {
-    if (mode === 'manus') return; // manus 无多轮记忆，跳过恢复
     const saved = localStorage.getItem(chatIdKey);
     if (!saved) return; // 无历史 chatId，首次发送时生成
     chatIdRef.current = saved;
     let cancelled = false;
-    fetchWithAuth(`/ai/history?chatId=${saved}`)
+    // manus 历史存独立 Redis key（manus:history:），chat/rag 走 ChatMemory
+    const historyUrl = mode === 'manus'
+      ? `/ai/manus/history?chatId=${saved}`
+      : `/ai/history?chatId=${saved}`;
+    fetchWithAuth(historyUrl)
       .then((res) => {
         // 区分"服务器错误"和"会话过期"。500/502 是临时错误（后端重启/Redis 抖动），
         // 保留 chatId 不清 localStorage，下次刷新可重试恢复。只有 200 且返回空数组才是
@@ -71,12 +74,14 @@ export function AiChatPanel({ mode }: AiChatPanelProps) {
           chatIdRef.current = '';
           return;
         }
-        // Redis 有历史 → 恢复消息列表（只显示 USER/ASSISTANT，跳过 SYSTEM 提示词）
+        // Redis 有历史 → 恢复消息列表（manus 含 STEP，chat/rag 只 USER/ASSISTANT）
         const restored: Message[] = hist
-          .filter((h) => h.role === 'USER' || h.role === 'ASSISTANT')
+          .filter((h) => h.role === 'USER' || h.role === 'ASSISTANT' || h.role === 'STEP')
           .map((h) => ({
             id: nextMsgId(),
-            role: h.role === 'USER' ? ('user' as const) : ('assistant' as const),
+            role: h.role === 'USER' ? ('user' as const)
+              : h.role === 'STEP' ? ('step' as const)
+              : ('assistant' as const),
             content: h.content,
           }));
         if (restored.length > 0) {
@@ -141,7 +146,7 @@ export function AiChatPanel({ mode }: AiChatPanelProps) {
       } else if (mode === 'manus') {
         // Manus ReAct 智能体 — SSE 推送 step/complete/error 事件
         await streamSse(
-          `/ai/manus/chat?message=${encodeURIComponent(text)}`,
+          `/ai/manus/chat?message=${encodeURIComponent(text)}&chatId=${chatIdRef.current}`,
           { method: 'GET', signal: controller.signal },
           (evt) => {
             if (evt.event === 'step') {

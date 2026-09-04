@@ -18,8 +18,9 @@ public interface FefoStrategy {
      *
      * @param zone 目标温区
      * @param qty  需要凑够的数量
+     * @param skuId 商品 SKU（null 表示不过滤）
      * @return 批次号列表（按过期日期升序）
      * @throws NoAvailableLotException 没有可用批次
      */
-    List<LotNo> getEarliest(TempZone zone, BigDecimal qty);
+    List<LotNo> getEarliest(TempZone zone, BigDecimal qty, Long skuId);
 }

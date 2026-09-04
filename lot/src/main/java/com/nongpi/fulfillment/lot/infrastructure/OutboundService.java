@@ -1,5 +1,6 @@
 package com.nongpi.fulfillment.lot.infrastructure;
 
+import com.nongpi.fulfillment.lot.application.LotAppService.BatchOutbound;
 import com.nongpi.fulfillment.lot.application.LotAppService.OutboundCommand;
 import com.nongpi.fulfillment.lot.application.LotAppService.LotOutboundResult;
 import com.nongpi.fulfillment.lot.domain.*;
@@ -58,15 +59,95 @@ public class OutboundService {
     }
 
     /**
-     * 执行出库 — FEFO 策略，逐批加锁出库直到凑够数量
+     * 执行出库
+     *
+     * <p>两种模式：</p>
+     * <ul>
+     *   <li>{@code cmd.lotNo()} 非空 → <b>指定批次直接出库</b>（前端批次行"出库"按钮），
+     *       对目标批次加分布式锁，扣减该批次剩余量。修复前 FEFO 会误选同温区最早过期批次，
+     *       导致用户点击的批次初始量/剩余量不变。</li>
+     *   <li>{@code cmd.lotNo()} 为空 → <b>FEFO 自动选批</b>（按 SKU+温区，最早过期优先），
+     *       累计出库直到凑够数量。</li>
+     * </ul>
      *
      * @param cmd 出库命令
      * @return 出库结果
      */
     @Transactional(rollbackFor = Exception.class)
     public LotOutboundResult execute(OutboundCommand cmd) {
-        // 1. 获取 FEFO 批次列表
-        List<LotNo> lotNos = fefoCache.getEarliest(cmd.tempZone(), cmd.qty());
+        // 指定批次直接出库（批次行"出库"按钮场景）
+        if (cmd.lotNo() != null && !cmd.lotNo().isBlank()) {
+            return outboundSpecificLot(cmd);
+        }
+        return outboundByFefo(cmd);
+    }
+
+    /**
+     * 指定批次直接出库 — 对目标批次加分布式锁，扣减该批次剩余量
+     */
+    private LotOutboundResult outboundSpecificLot(OutboundCommand cmd) {
+        LotNo lotNo = LotNo.fromString(cmd.lotNo());
+        RLock lock = redissonClient.getLock(LOCK_KEY_PREFIX + lotNo.value());
+        try {
+            boolean locked = lock.tryLock(
+                    redissonConfig.getLockWaitTime(),
+                    redissonConfig.getLockLeaseTime(),
+                    TimeUnit.MILLISECONDS
+            );
+            if (!locked) {
+                throw new BusinessException(409, "LOCK_FAILED",
+                        "批次 " + cmd.lotNo() + " 正在被其他操作处理，请重试");
+            }
+            try {
+                Lot lot = repository.getById(lotNo)
+                        .orElseThrow(() -> new IllegalArgumentException("批次不存在: " + cmd.lotNo()));
+
+                // 出库前置校验：温区匹配 + 库存充足 + 未过期（canOutbound 内部执行）
+                lot.outbound(cmd.qty(), cmd.toLocation());
+                repository.update(lot);
+
+                // 事务内原子扣减库存（DB WHERE 条件防超卖）
+                int affected = inventoryMapper.decreaseStock(cmd.skuId(), cmd.tempZone().name(), cmd.qty());
+                if (affected == 0) {
+                    throw new BusinessException(422, "INSUFFICIENT_QTY",
+                            "可用库存不足：出库 " + cmd.qty() + "，SKU=" + cmd.skuId() + " 温区=" + cmd.tempZone());
+                }
+
+                // 批次出清后，事务提交后再清理 Redis ZSet
+                if (lot.getStatus() == LotStatus.FULLY_OUT) {
+                    String lotNoValue = lot.getLotNo().value();
+                    registerPostCommit(() -> {
+                        try {
+                            fefoCache.removeLot(lotNoValue, lot.getTempZone());
+                        } catch (Exception e) {
+                            log.error("Redis 移除 FEFO 缓存失败，批次 {}", lotNoValue, e);
+                        }
+                    });
+                }
+
+                return new LotOutboundResult(
+                        lot.getLotNo().value(),
+                        cmd.qty(),
+                        lot.getRemainingQty(),
+                        lot.getStatus()
+                );
+            } finally {
+                if (lock.isHeldByCurrentThread()) {
+                    lock.unlock();
+                }
+            }
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            throw new RuntimeException("出库操作被中断", e);
+        }
+    }
+
+    /**
+     * FEFO 自动选批出库 — 逐批加锁出库直到凑够数量
+     */
+    private LotOutboundResult outboundByFefo(OutboundCommand cmd) {
+        // 1. 获取 FEFO 批次列表（按 SKU 过滤，防止同温区误扣其他商品批次）
+        List<LotNo> lotNos = fefoCache.getEarliest(cmd.tempZone(), cmd.qty(), cmd.skuId());
 
         // 2. 逐批出库
         BigDecimal remaining = cmd.qty();//全局遍历，用于下次出库判断是否满足条件
@@ -74,6 +155,7 @@ public class OutboundService {
         LotStatus finalStatus = null;
         String finalLotNo = null;
         List<String> fullyOutLotNos = new ArrayList<>();
+        List<BatchOutbound> batches = new ArrayList<>();
 
         for (LotNo lotNo : lotNos) {
             // 获取分布式锁
@@ -112,6 +194,7 @@ public class OutboundService {
                     remaining = remaining.subtract(outQty);
                     finalStatus = lot.getStatus();
                     finalLotNo = lot.getLotNo().value();
+                    batches.add(new BatchOutbound(lot.getLotNo().value(), outQty, lot.getRemainingQty(), lot.getStatus()));
 
                     // 8. 如果已凑够数量，停止
                     if (remaining.compareTo(BigDecimal.ZERO) <= 0) {
@@ -155,7 +238,8 @@ public class OutboundService {
                 finalLotNo,
                 totalOut,
                 BigDecimal.ZERO.max(remaining), // 剩余未出库数量
-                finalStatus
+                finalStatus,
+                batches
         );
     }
 

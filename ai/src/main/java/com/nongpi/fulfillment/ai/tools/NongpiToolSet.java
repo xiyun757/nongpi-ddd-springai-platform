@@ -21,6 +21,7 @@ import org.springframework.ai.tool.annotation.ToolParam;
 import org.springframework.stereotype.Component;
 
 import java.math.BigDecimal;
+import java.util.List;
 
 /**
  * 农批智能客服 — 业务工具集（演示版）
@@ -94,7 +95,7 @@ public class NongpiToolSet {
      * <p>注意：出库按 FEFO 策略自动选最早过期批次，不能指定特定 lotNo。
      * 如需操作指定批次，用 transferLot 转库工具。</p>
      */
-    @Tool(description = "按 SKU 和温区执行出库操作（FEFO 先过期先出策略，系统自动选最早过期批次，不能指定批次号）。用于用户需要减少库存时调用。如需操作指定批次，请用 transferLot 工具。需要管理员权限。")
+    @Tool(description = "按 SKU 和温区执行出库操作（FEFO 先过期先出策略，系统自动选最早过期批次，不能指定批次号）。用于用户需要减少库存时调用。需要管理员权限。")
     public LotAppService.LotOutboundResult outboundLot(
             @ToolParam(description = "SKU 编号") Long skuId,
             @ToolParam(description = "温区：FREEZE/FRESH/NORMAL") String tempZone,
@@ -105,7 +106,8 @@ public class NongpiToolSet {
                 skuId,
                 TempZone.valueOf(tempZone.trim().toUpperCase()),
                 new BigDecimal(qty.trim()),
-                toLocation
+                toLocation,
+                null // AI 工具不指定批次，走 FEFO 自动选最早过期批次
         );
         return lotAppService.outbound(cmd);
     }
@@ -168,15 +170,16 @@ public class NongpiToolSet {
      * <p>返回结构化预警详情，让 LLM 能链式调用 freezeStock 冻结对应库存。
      * 原 int 返回值 LLM 无法据此决定冻结哪个 SKU，导致链路断裂。</p>
      */
-    @Tool(description = "扫描所有在库批次，按已启用的预警规则检查临期情况并生成预警记录。返回新增预警记录的详情列表，每条含 lotNo/skuId/tempZone/daysLeft/message，便于后续冻结对应库存。需要管理员权限。")
-    public String checkExpiringLots() {
+    @Tool(description = "扫描所有在库批次，按已启用的预警规则检查临期情况并生成预警记录。返回新增的未处理预警记录列表（含 lotNo/skuId/tempZone/alertLevel/message），便于后续对每条预警调用 freezeStock 冻结对应 SKU+温区的库存。需要管理员权限。")
+    public List<AlertRecordResponse> checkExpiringLots() {
         ToolPermission.requireAdmin();
         int count = alertAppService.checkExpiringLots();
         if (count == 0) {
-            return "无新增预警记录";
+            return List.of();
         }
-        // 查询刚生成的未处理预警记录，结构化返回给 LLM
-        return "新增 " + count + " 条预警记录，调用 listAlertRecords 查看详情";
+        // 拉取未处理预警（取前 50 条），把结构化详情返回给 LLM，
+        // 否则 LLM 无法据此决定 freezeStock 的 skuId/tempZone，链路断裂。
+        return alertQueryService.listRecords(false, null, null, null, null, 1, 50).getRecords();
     }
 
     // ── 权限校验 ────────────────────────────────────────────

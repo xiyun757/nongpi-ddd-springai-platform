@@ -1,19 +1,19 @@
 package com.nongpi.fulfillment.alert.api;
 
 import com.baomidou.mybatisplus.core.metadata.IPage;
+import com.nongpi.fulfillment.alert.api.dto.AlertRecordDetailResponse;
 import com.nongpi.fulfillment.alert.api.dto.AlertRecordResponse;
 import com.nongpi.fulfillment.alert.api.dto.AlertRuleResponse;
+import com.nongpi.fulfillment.alert.api.dto.CheckResultResponse;
+import com.nongpi.fulfillment.alert.api.dto.CreateRuleRequest;
+import com.nongpi.fulfillment.alert.api.dto.HandleRequest;
+import com.nongpi.fulfillment.alert.api.dto.ToggleRuleRequest;
 import com.nongpi.fulfillment.alert.application.AlertAppService;
 import com.nongpi.fulfillment.alert.application.AlertAppService.CreateRuleCommand;
 import com.nongpi.fulfillment.alert.application.AlertQueryService;
 import com.nongpi.fulfillment.alert.domain.AlertRecord;
 import com.nongpi.fulfillment.alert.domain.AlertRule;
-import com.nongpi.fulfillment.common.domain.AlertLevel;
-import com.nongpi.fulfillment.common.domain.TempZone;
 import jakarta.validation.Valid;
-import jakarta.validation.constraints.Min;
-import jakarta.validation.constraints.NotBlank;
-import jakarta.validation.constraints.NotNull;
 import org.springframework.web.bind.annotation.*;
 import org.springframework.format.annotation.DateTimeFormat;
 
@@ -116,28 +116,6 @@ public class AlertController {
         AlertRule rule = alertAppService.toggleRule(id, req.enabled());
         return alertQueryService.getRuleById(rule.getId());
     }
-
-    // ── 响应 / 请求 DTO ──────────────────────────────────────
-
-    /** 预警详情响应（含 id 字段，前端处理时需要） */
-    public record AlertRecordDetailResponse(
-            Long id, String lotNo, Long alertRuleId, String alertLevel,
-            String message, boolean handled, String handler,
-            String handledAt, String createdAt
-    ) {}
-
-    public record CheckResultResponse(int newAlertCount) {}
-
-    public record HandleRequest(@NotBlank(message = "处理人不能为空") String handler) {}
-
-    public record CreateRuleRequest(
-            Long skuId,
-            TempZone tempZone,
-            @NotNull(message = "阈值天数不能为空") @Min(value = 1, message = "阈值天数必须大于0") int thresholdDays,
-            @NotNull(message = "预警级别不能为空") AlertLevel alertLevel
-    ) {}
-
-    public record ToggleRuleRequest(boolean enabled) {}
 
     // ── 转换方法 ────────────────────────────────────────────
 

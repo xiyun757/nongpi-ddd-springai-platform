@@ -21,7 +21,7 @@ import org.springframework.scheduling.annotation.EnableScheduling;
 })
 @ComponentScan("com.nongpi.fulfillment")
 @EnableScheduling
-@MapperScan("com.nongpi.fulfillment")
+@MapperScan(basePackages = "com.nongpi.fulfillment", annotationClass = Mapper.class)
 public class NongpiFulfillmentApplication {
 
     public static void main(String[] args) {

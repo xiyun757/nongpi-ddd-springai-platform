@@ -47,7 +47,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const login = useCallback(async (username: string, password: string) => {
     let res: Response;
     try {
-      res = await fetch('/api/auth/login', {
+      // 直连后端，绕过 Next.js 代理（与 api.ts 的 fetchWithAuth 一致）
+      const loginUrl = process.env.NEXT_PUBLIC_API_BASE || 'http://localhost:8080';
+      res = await fetch(`${loginUrl}/api/auth/login`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ username, password }),

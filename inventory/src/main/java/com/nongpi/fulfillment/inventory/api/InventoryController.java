@@ -1,7 +1,8 @@
 package com.nongpi.fulfillment.inventory.api;
 
 import com.baomidou.mybatisplus.core.metadata.IPage;
-import com.nongpi.fulfillment.common.domain.TempZone;
+import com.nongpi.fulfillment.inventory.api.dto.AdjustRequest;
+import com.nongpi.fulfillment.inventory.api.dto.FreezeRequest;
 import com.nongpi.fulfillment.inventory.api.dto.InventoryDetailResponse;
 import com.nongpi.fulfillment.inventory.api.dto.InventoryResponse;
 import com.nongpi.fulfillment.inventory.application.InventoryAppService;
@@ -10,8 +11,6 @@ import com.nongpi.fulfillment.inventory.application.InventoryAppService.FreezeCo
 import com.nongpi.fulfillment.inventory.application.InventoryQueryService;
 import com.nongpi.fulfillment.inventory.domain.Inventory;
 import jakarta.validation.Valid;
-import jakarta.validation.constraints.DecimalMin;
-import jakarta.validation.constraints.NotNull;
 import org.springframework.web.bind.annotation.*;
 
 import java.math.BigDecimal;
@@ -93,20 +92,6 @@ public class InventoryController {
         Inventory inv = inventoryAppService.unfreeze(cmd);
         return toDetailResponse(inv);
     }
-
-    // ── 响应 / 请求 DTO ──────────────────────────────────────
-
-    public record AdjustRequest(
-            @NotNull(message = "skuId不能为空") Long skuId,
-            @NotNull(message = "tempZone不能为空") TempZone tempZone,
-            @NotNull(message = "调整数量不能为空") BigDecimal delta
-    ) {}
-
-    public record FreezeRequest(
-            @NotNull(message = "skuId不能为空") Long skuId,
-            @NotNull(message = "tempZone不能为空") TempZone tempZone,
-            @NotNull(message = "数量不能为空") @DecimalMin(value = "0.01", message = "数量必须大于0") BigDecimal qty
-    ) {}
 
     /** 写操作后的响应（不含 updatedAt，从聚合根转换） */
     private InventoryDetailResponse toDetailResponse(Inventory inv) {

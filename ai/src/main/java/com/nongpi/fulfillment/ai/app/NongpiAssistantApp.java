@@ -4,6 +4,11 @@ import com.nongpi.fulfillment.ai.rag.QueryRewriter;
 import com.nongpi.fulfillment.ai.rag.RagAdvisorFactory;
 import com.nongpi.fulfillment.ai.rag.RagCategoryInferrer;
 import com.nongpi.fulfillment.ai.tools.NongpiToolSet;
+import com.fasterxml.jackson.core.type.TypeReference;
+import com.fasterxml.jackson.databind.ObjectMapper;
+import org.redisson.api.RBucket;
+import org.redisson.api.RedissonClient;
+import org.redisson.client.codec.StringCodec;
 import org.springframework.ai.chat.client.ChatClient;
 import org.springframework.ai.chat.memory.ChatMemory;
 import org.springframework.ai.chat.messages.Message;
@@ -21,6 +26,7 @@ import org.slf4j.LoggerFactory;
 import java.io.IOException;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Map;
 import java.util.concurrent.CompletableFuture;
 
 /**
@@ -51,6 +57,11 @@ public class NongpiAssistantApp {
     private final RagAdvisorFactory ragAdvisorFactory;
     /** ChatMemory — 查询历史对话用于前端刷新恢复 */
     private final ChatMemory chatMemory;
+    /** RedissonClient — Manus 历史持久化（独立于 ChatMemory 的存储 key） */
+    private final RedissonClient redissonClient;
+    private final ObjectMapper objectMapper;
+
+    private static final String MANUS_HISTORY_PREFIX = "manus:history:";
 
     public NongpiAssistantApp(ChatClient chatClient,
                               NongpiToolSet nongpiToolSet,
@@ -58,7 +69,9 @@ public class NongpiAssistantApp {
                               QueryRewriter queryRewriter,
                               RagCategoryInferrer categoryInferrer,
                               RagAdvisorFactory ragAdvisorFactory,
-                              ChatMemory chatMemory) {
+                              ChatMemory chatMemory,
+                              RedissonClient redissonClient,
+                              ObjectMapper objectMapper) {
         this.chatClient = chatClient;
         this.nongpiToolSet = nongpiToolSet;
         this.mcpToolProvider = mcpToolProvider;
@@ -66,6 +79,8 @@ public class NongpiAssistantApp {
         this.categoryInferrer = categoryInferrer;
         this.ragAdvisorFactory = ragAdvisorFactory;
         this.chatMemory = chatMemory;
+        this.redissonClient = redissonClient;
+        this.objectMapper = objectMapper.copy();
     }
 
     /**
@@ -85,6 +100,28 @@ public class NongpiAssistantApp {
             return result;
         } catch (Exception e) {
             log.warn("ChatMemory getHistory 失败 chatId={}: {}", chatId, e.getMessage());
+            return new ArrayList<>();
+        }
+    }
+
+    /**
+     * 查询 Manus 对话历史 — 供前端刷新页面后恢复智能体对话记录
+     * <p>Manus 历史存 Redis key {@code manus:history:<chatId>}，TTL 1h。
+     * 只存 USER 原始消息 + ASSISTANT 最终回复，不存 ReAct 步骤。</p>
+     */
+    public List<ChatMessageDto> getManusHistory(String chatId) {
+        try {
+            RBucket<String> bucket = redissonClient.getBucket(MANUS_HISTORY_PREFIX + chatId, StringCodec.INSTANCE);
+            String json = bucket.get();
+            if (json == null) return new ArrayList<>();
+            List<Map<String, String>> dtoList = objectMapper.readValue(json, new TypeReference<>() {});
+            List<ChatMessageDto> result = new ArrayList<>();
+            for (Map<String, String> dto : dtoList) {
+                result.add(new ChatMessageDto(dto.get("role"), dto.get("content")));
+            }
+            return result;
+        } catch (Exception e) {
+            log.warn("Manus history 查询失败 chatId={}: {}", chatId, e.getMessage());
             return new ArrayList<>();
         }
     }

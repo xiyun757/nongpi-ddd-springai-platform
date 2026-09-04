@@ -1,8 +1,8 @@
 package com.nongpi.fulfillment.common.api;
 
+import com.nongpi.fulfillment.common.api.dto.LoginRequest;
 import com.nongpi.fulfillment.common.exception.BusinessException;
 import com.nongpi.fulfillment.common.infrastructure.util.JwtTokenProvider;
-import jakarta.validation.constraints.NotBlank;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
@@ -49,9 +49,4 @@ public class AuthController {
                 "role", ADMIN_ROLE
         );
     }
-
-    public record LoginRequest(
-            @NotBlank(message = "用户名不能为空") String username,
-            @NotBlank(message = "密码不能为空") String password
-    ) {}
 }

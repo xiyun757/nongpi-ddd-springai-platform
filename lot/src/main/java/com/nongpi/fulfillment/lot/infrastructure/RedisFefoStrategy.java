@@ -35,7 +35,7 @@ public class RedisFefoStrategy implements FefoStrategy {
     }
 
     @Override
-    public List<LotNo> getEarliest(TempZone zone, BigDecimal qty) {
+    public List<LotNo> getEarliest(TempZone zone, BigDecimal qty, Long skuId) {
         String key = fefoKey(zone);
         RScoredSortedSet<String> zset = redissonClient.getScoredSortedSet(key);
         Collection<String> members = zset.valueRange(0, MAX_CANDIDATES - 1);
@@ -48,10 +48,14 @@ public class RedisFefoStrategy implements FefoStrategy {
         List<LotNo> lotNos = members.stream().map(LotNo::fromString).toList();
         List<Lot> lots = repository.findByIds(lotNos);
 
-        // 内存过滤：仅保留 IN_STOCK/PARTIAL_OUT，按 expireDate 升序
+        // 内存过滤：仅保留 IN_STOCK/PARTIAL_OUT + 未过期 + SKU 匹配（防止同温区误扣其他 SKU 批次），按 expireDate 升序
+        // 与 DatabaseFefoStrategy 过滤逻辑对齐：过期批次必须排除，否则 outbound()→canOutbound() 抛 ExpiredException 导致整个 FEFO 出库事务回滚
+        java.time.LocalDate today = java.time.LocalDate.now();
         List<Lot> validLots = lots.stream()
                 .filter(l -> l.getStatus() == LotStatus.IN_STOCK
                         || l.getStatus() == LotStatus.PARTIAL_OUT)
+                .filter(l -> !l.getExpireDate().isBefore(today))
+                .filter(l -> skuId == null || Objects.equals(l.getSkuId(), skuId))
                 .sorted(Comparator.comparing(Lot::getExpireDate))
                 .toList();
 

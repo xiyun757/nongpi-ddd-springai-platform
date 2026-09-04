@@ -25,6 +25,12 @@
             <artifactId>inventory</artifactId>
             <version>${project.version}</version>
         </dependency>
+        <!-- lot 依赖 sku：入库时校验 skuId 主数据存在（主数据 → 交易数据闭环） -->
+        <dependency>
+            <groupId>com.nongpi.fulfillment</groupId>
+            <artifactId>sku</artifactId>
+            <version>${project.version}</version>
+        </dependency>
         <dependency>
             <groupId>org.projectlombok</groupId>
             <artifactId>lombok</artifactId>

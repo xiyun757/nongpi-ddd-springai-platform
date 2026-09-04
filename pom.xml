@@ -18,6 +18,7 @@
         <module>lot</module>
         <module>inventory</module>
         <module>alert</module>
+        <module>sku</module>
         <!-- trace-agent 模块已删除(LangChain4j 推理模型兼容性问题),保留 DDD+中间件核心能力 -->
         <module>bootstrap</module>
         <module>common</module>

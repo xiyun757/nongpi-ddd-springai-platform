@@ -61,6 +61,7 @@ export default function OutboundDialog({ open, onOpenChange, lot }: Props) {
         tempZone: lot.tempZone,
         qty: qtyNum,
         toLocation: toLocation.trim(),
+        lotNo: lot.lotNo, // 精确扣减该批次（FEFO 只用于未指定批次的出库）
       });
       await queryClient.invalidateQueries({ queryKey: ['lots'] });
       showActionSuccess('出库', result.lotNo);

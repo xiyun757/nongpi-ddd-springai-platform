@@ -3,7 +3,9 @@ package com.nongpi.fulfillment.ai.api;
 import com.nongpi.fulfillment.ai.agent.NongpiManus;
 import com.nongpi.fulfillment.ai.app.NongpiAssistantApp;
 import com.nongpi.fulfillment.ai.app.NongpiAssistantApp.ChatMessageDto;
+import jakarta.validation.constraints.Pattern;
 import org.springframework.context.ApplicationContext;
+import org.springframework.validation.annotation.Validated;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestMapping;
@@ -26,6 +28,7 @@ import java.util.List;
  * </p>
  */
 @RestController
+@Validated
 @RequestMapping("/api/ai")
 public class AiController {
 
@@ -41,7 +44,9 @@ public class AiController {
      * 基础对话（同步）
      */
     @PostMapping("/chat")
-    public String chat(@RequestParam String message, @RequestParam String chatId) {
+    public String chat(@RequestParam String message,
+                       @Pattern(regexp = "^[A-Za-z0-9_:-]{1,128}$", message = "chatId 只允许字母数字下划线冒号连字符")
+                       @RequestParam String chatId) {
         validateChatId(chatId);
         return assistant.chat(message, chatId);
     }
@@ -51,7 +56,9 @@ public class AiController {
      * <p>GET + query 参数，避免 POST 无 body 的 Content-Type 歧义</p>
      */
     @GetMapping(value = "/chat/stream", produces = "text/event-stream")
-    public SseEmitter chatStream(@RequestParam String message, @RequestParam String chatId) {
+    public SseEmitter chatStream(@RequestParam String message,
+                                 @Pattern(regexp = "^[A-Za-z0-9_:-]{1,128}$", message = "chatId 只允许字母数字下划线冒号连字符")
+                                 @RequestParam String chatId) {
         validateChatId(chatId);
         return assistant.chatStream(message, chatId);
     }
@@ -61,7 +68,9 @@ public class AiController {
      * <p>GET + query 参数，与 /chat/stream 和 /manus/chat 一致用 SseEmitter 流式推送。</p>
      */
     @GetMapping(value = "/chat/rag", produces = "text/event-stream")
-    public SseEmitter chatWithRag(@RequestParam String message, @RequestParam String chatId) {
+    public SseEmitter chatWithRag(@RequestParam String message,
+                                  @Pattern(regexp = "^[A-Za-z0-9_:-]{1,128}$", message = "chatId 只允许字母数字下划线冒号连字符")
+                                  @RequestParam String chatId) {
         validateChatId(chatId);
         return assistant.chatWithRagStream(message, chatId);
     }
@@ -69,14 +78,28 @@ public class AiController {
     /**
      * Manus ReAct 智能体 — 多步规划+执行，SSE 逐步推送 think/act 过程
      * <p>示例：查批次 LOT001 的状态并入库补充</p>
-     * <p>无 chatId 参数 — Manus 是单次多步任务执行（非多轮对话），
-     * 每次请求 initialize() 清空 messageList 重新开始，不依赖跨会话记忆。
-     * NongpiManus 是 prototype scope，每次 getBean 取新实例避免并发串话。</p>
+     * <p>chatId 用于持久化对话历史到 Redis（key=manus:history:{chatId}，TTL 1h），
+     * 刷新页面后前端调 /manus/history 恢复对话记录。ReAct 步骤不持久化，只存最终对话。</p>
+     * <p>NongpiManus 是 prototype scope，每次 getBean 取新实例避免并发串话。</p>
      */
     @GetMapping(value = "/manus/chat", produces = "text/event-stream")
-    public SseEmitter manusChat(@RequestParam String message) {
+    public SseEmitter manusChat(@RequestParam String message,
+                                @Pattern(regexp = "^[A-Za-z0-9_:-]{1,128}$", message = "chatId 只允许字母数字下划线冒号连字符")
+                                @RequestParam String chatId) {
+        validateChatId(chatId);
         NongpiManus nongpiManus = applicationContext.getBean(NongpiManus.class);
+        nongpiManus.setChatId(chatId);
         return nongpiManus.runStream(message);
+    }
+
+    /**
+     * 查询 Manus 对话历史 — 供前端刷新页面后恢复智能体对话记录
+     * <p>从 Redis 拉 manus:history:{chatId}，只含 USER/ASSISTANT 消息（无 ReAct 步骤）。</p>
+     */
+    @GetMapping("/manus/history")
+    public List<ChatMessageDto> manusHistory(@RequestParam String chatId) {
+        validateChatId(chatId);
+        return assistant.getManusHistory(chatId);
     }
 
     /**

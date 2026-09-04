@@ -75,6 +75,24 @@ public class RagConfig {
     }
 
     /**
+     * MySQL 主库 JdbcTemplate — @Primary 关键！
+     *
+     * <p>一旦显式声明了 pgJdbcTemplate，Spring Boot 的 JdbcTemplateAutoConfiguration
+     * 会因 {@code @ConditionalOnMissingBean(JdbcOperations.class)} 而不再自动创建默认
+     * JdbcTemplate。若这里不补一个 MySQL 版，其他模块裸注入 {@code JdbcTemplate} 时
+     * 唯一候选是 pgJdbcTemplate（连 PG），SQL 全打到 PG → 如
+     * {@code LotEventConsumer} 的幂等表 {@code INSERT INTO t_mq_consume_log} 报
+     * {@code relation "t_mq_consume_log" does not exist}。</p>
+     *
+     * <p>标 @Primary 后，无 qualifier 的 {@code JdbcTemplate} 注入默认取 MySQL 主库。</p>
+     */
+    @Bean("mysqlJdbcTemplate")
+    @Primary
+    public JdbcTemplate mysqlJdbcTemplate(@Qualifier("dataSource") DataSource mysqlDataSource) {
+        return new JdbcTemplate(mysqlDataSource);
+    }
+
+    /**
      * 向量存储 — PGVector（bge-m3 = 1024 维，余弦相似度，HNSW 索引）
      * <p>initializeSchema=true 自动建表，启动即可用。</p>
      */

@@ -147,6 +147,23 @@
   animation: fadeIn 0.3s ease-out;
 }
 
+/* 页面切换淡入 — 由 AppShell 按 pathname key 触发，每个页面根节点生效，
+   时长 0.28s 处于人眼舒适区间（200-400ms），太快无感、太慢拖沓 */
+@keyframes pageFadeIn {
+  from { opacity: 0; transform: translateY(6px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+.animate-page-fade {
+  animation: pageFadeIn 0.28s ease-out;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .animate-fadeIn,
+  .animate-page-fade {
+    animation: none;
+  }
+}
+
 /* 登录页克制微交互 — 仅允许淡入/聚焦/hover，无花哨动画 */
 @keyframes errorShake {
   0%, 100% { transform: translateX(0); }

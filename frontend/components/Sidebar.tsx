@@ -15,6 +15,7 @@ interface NavItem {
 
 const NAV_ITEMS: NavItem[] = [
   { href: '/', icon: '📊', label: '仪表盘', match: (p) => p === '/' },
+  { href: '/skus', icon: '🏷️', label: '商品管理', match: (p) => p.startsWith('/skus') },
   { href: '/lots', icon: '📦', label: '批次管理', match: (p) => p.startsWith('/lots') },
   { href: '/inventory', icon: '📋', label: '库存管理', match: (p) => p.startsWith('/inventory') },
   {

@@ -1,4 +1,16 @@
-const BASE_URL = '/api';
+/**
+ * 后端 API 基础地址 — 直连后端，绕过 Next.js rewrites 代理。
+ *
+ * <p>Next.js dev server 的 rewrites 用 http-proxy 转发，会缓冲整个响应体
+ * （非流式 chunk 传递），导致每次 API 调用额外 1-2s 延迟。SSE 请求早已
+ * 直连（ai-sse.ts），普通 API 也应直连以保持一致。CORS 在 SecurityConfig
+ * 已全量放行，直连无跨域问题。</p>
+ *
+ * <p>通过 .env.local 的 NEXT_PUBLIC_API_BASE 配置；未设置时默认直连 8080。</p>
+ */
+const API_BASE_URL = process.env.NEXT_PUBLIC_API_BASE || 'http://localhost:8080';
+
+const BASE_URL = API_BASE_URL + '/api';
 const TOKEN_KEY = 'auth_token';
 
 /**
@@ -55,11 +67,50 @@ export async function fetchJsonWithAuth<T>(
   return res.json() as Promise<T>;
 }
 
+// ── 商品主数据（SKU） ────────────────────────────────────
+
+export interface SkuItem {
+  id: number;
+  name: string;
+  spec?: string | null;
+  unit: string;
+  barcode?: string | null;
+}
+
+/** 商品列表（下拉选择用） */
+export async function fetchSkus(): Promise<SkuItem[]> {
+  return fetchJsonWithAuth<SkuItem[]>('/skus');
+}
+
+/** 新建商品 */
+export async function createSku(data: {
+  name: string;
+  spec?: string;
+  unit: string;
+  barcode?: string;
+}): Promise<SkuItem> {
+  return fetchJsonWithAuth<SkuItem>('/skus', {
+    method: 'POST',
+    body: JSON.stringify(data),
+  });
+}
+
+/** 删除商品 */
+export async function deleteSku(id: number): Promise<void> {
+  const res = await fetchWithAuth(`/skus/${id}`, { method: 'DELETE' });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({ error: `HTTP ${res.status}` }));
+    throw new Error(err.error || `删除失败: HTTP ${res.status}`);
+  }
+}
+
 // ── 批次 ────────────────────────────────────────────────
 
 export interface LotItem {
   lotNo: string;
   skuId: number;
+  /** 商品名称（后端联查 t_sku，未关联时为 null） */
+  skuName?: string | null;
   tempZone: string;
   produceDate: string;
   expireDate: string;
@@ -318,19 +369,35 @@ export interface OutboundRequest {
   tempZone: string;
   qty: number;
   toLocation: string;
+  /** 指定批次号：批次行"出库"按钮必传，精确扣减该批次；不传则 FEFO 自动选最早过期批次 */
+  lotNo?: string;
 }
 
 export interface OutboundResult {
   lotNo: string;
   outQty: number;
   remainingQty: number;
-  toLocation: string;
-  success: boolean;
-  message?: string;
+  status: string;
 }
 
 export async function submitOutbound(data: OutboundRequest): Promise<OutboundResult> {
   return fetchJsonWithAuth<OutboundResult>('/lots/outbound', {
+    method: 'POST',
+    body: JSON.stringify(data),
+  });
+}
+
+// ── 转库模块 ────────────────────────────────────────────
+
+export interface TransferRequest {
+  lotNo: string;
+  qty: number;
+  fromLocation?: string;
+  toLocation?: string;
+}
+
+export async function submitTransfer(data: TransferRequest): Promise<OutboundResult> {
+  return fetchJsonWithAuth<OutboundResult>('/lots/transfer', {
     method: 'POST',
     body: JSON.stringify(data),
   });

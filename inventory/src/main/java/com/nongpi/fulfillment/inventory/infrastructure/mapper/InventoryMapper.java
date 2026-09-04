@@ -39,4 +39,26 @@ public interface InventoryMapper extends BaseMapper<InventoryPO> {
     int decreaseStock(@Param("skuId") Long skuId,
                       @Param("tempZone") String tempZone,
                       @Param("qty") BigDecimal qty);
+
+    /**
+     * 原子冻结库存 — DB 层校验可用量，避免「读-改-写」高并发下反复乐观锁冲突
+     *
+     * @return 影响行数（1=冻结成功，0=可用量不足）
+     */
+    @Update("UPDATE t_inventory SET frozen_qty = frozen_qty + #{qty}, version = version + 1 " +
+            "WHERE sku_id = #{skuId} AND temp_zone = #{tempZone} AND (total_qty - frozen_qty) >= #{qty}")
+    int freezeStock(@Param("skuId") Long skuId,
+                    @Param("tempZone") String tempZone,
+                    @Param("qty") BigDecimal qty);
+
+    /**
+     * 原子解冻库存 — DB 层校验冻结量，避免解冻超过已冻结
+     *
+     * @return 影响行数（1=解冻成功，0=冻结量不足）
+     */
+    @Update("UPDATE t_inventory SET frozen_qty = frozen_qty - #{qty}, version = version + 1 " +
+            "WHERE sku_id = #{skuId} AND temp_zone = #{tempZone} AND frozen_qty >= #{qty}")
+    int unfreezeStock(@Param("skuId") Long skuId,
+                      @Param("tempZone") String tempZone,
+                      @Param("qty") BigDecimal qty);
 }

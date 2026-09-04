@@ -45,6 +45,50 @@ class FefoCacheTest {
         );
     }
 
+    /**
+     * 构建 FefoCache（供降级路径测试）
+     * <p>FefoCache 构造函数已改为工厂模式：{@code FefoCache(FefoStrategyFactory, RedisFefoStrategy)}，
+     * Redis 策略不可用时，由工厂内部降级为数据库策略。</p>
+     *
+     * @param redisStrategy Redis 策略 mock（可由调用方控制抛异常/ZSet 行为）
+     * @param repo          仓储 mock
+     */
+    private FefoCache buildCache(RedisFefoStrategy redisStrategy, ILotRepository repo) {
+        DatabaseFefoStrategy dbStrategy = mock(DatabaseFefoStrategy.class);
+        FefoStrategyFactory factory = mock(FefoStrategyFactory.class);
+        // 模拟真实工厂语义：先 Redis，抛 FefoStrategyUnavailableException 时降级 DB
+        when(factory.getStrategy()).thenReturn((zone, qty, skuId) -> {
+            try {
+                return redisStrategy.getEarliest(zone, qty, skuId);
+            } catch (FefoStrategyUnavailableException e) {
+                return dbStrategy.getEarliest(zone, qty, skuId);
+            }
+        });
+        when(dbStrategy.getEarliest(any(), any(), any()))
+                .thenAnswer(inv -> {
+                    TempZone zone = inv.getArgument(0);
+                    List<LotNo> result = repo.findByTempZoneAndExpireDateBefore(zone, TODAY.plusDays(999))
+                            .stream()
+                            .filter(l -> l.getStatus() == LotStatus.IN_STOCK || l.getStatus() == LotStatus.PARTIAL_OUT)
+                            .filter(l -> !l.getExpireDate().isBefore(TODAY))
+                            .map(Lot::getLotNo)
+                            .toList();
+                    if (result.isEmpty()) {
+                        throw new NoAvailableLotException("温区 " + zone + " 没有可用的批次");
+                    }
+                    return result;
+                });
+        return new FefoCache(factory, redisStrategy);
+    }
+
+    /** Redis 抛异常版（简化降级测试） */
+    private FefoCache cacheWithRedisDown(ILotRepository repo) {
+        RedisFefoStrategy redisStrategy = mock(RedisFefoStrategy.class);
+        when(redisStrategy.getEarliest(any(), any(), any()))
+                .thenThrow(new FefoStrategyUnavailableException("模拟 Redis 不可用"));
+        return buildCache(redisStrategy, repo);
+    }
+
     @Nested
     @DisplayName("getEarliest — Redis 不可用时降级")
     class FallbackTest {
@@ -52,16 +96,12 @@ class FefoCacheTest {
         @Test
         @DisplayName("Redis 连接异常 → 降级查 DB，返回有效批次")
         void shouldFallbackWhenRedisDown() {
-            RedissonClient client = mock(RedissonClient.class);
-            when(client.getScoredSortedSet(anyString()))
-                    .thenThrow(new RuntimeException("连接拒绝"));
-
             ILotRepository repo = mock(ILotRepository.class);
             when(repo.findByTempZoneAndExpireDateBefore(eq(TempZone.FRESH), any()))
                     .thenReturn(List.of(createLot("LOT20260828001101", LotStatus.IN_STOCK, new BigDecimal("500"))));
 
-            FefoCache cache = new FefoCache(client, repo);
-            List<LotNo> result = cache.getEarliest(TempZone.FRESH, new BigDecimal("300"));
+            FefoCache cache = cacheWithRedisDown(repo);
+            List<LotNo> result = cache.getEarliest(TempZone.FRESH, new BigDecimal("300"), null);
 
             assertEquals(1, result.size());
             assertEquals("LOT20260828001101", result.get(0).value());
@@ -70,26 +110,18 @@ class FefoCacheTest {
         @Test
         @DisplayName("降级查询无可用批次 → 抛 NoAvailableLotException")
         void shouldThrowWhenNoAvailableInFallback() {
-            RedissonClient client = mock(RedissonClient.class);
-            when(client.getScoredSortedSet(anyString()))
-                    .thenThrow(new RuntimeException("连接拒绝"));
-
             ILotRepository repo = mock(ILotRepository.class);
             when(repo.findByTempZoneAndExpireDateBefore(any(), any()))
                     .thenReturn(List.of()); // DB 也无可用批次
 
-            FefoCache cache = new FefoCache(client, repo);
+            FefoCache cache = cacheWithRedisDown(repo);
             assertThrows(NoAvailableLotException.class,
-                    () -> cache.getEarliest(TempZone.FREEZE, new BigDecimal("100")));
+                    () -> cache.getEarliest(TempZone.FREEZE, new BigDecimal("100"), null));
         }
 
         @Test
         @DisplayName("降级查询过滤已出清批次（FULLY_OUT 不返回）")
         void shouldFilterFullyOutInFallback() {
-            RedissonClient client = mock(RedissonClient.class);
-            when(client.getScoredSortedSet(anyString()))
-                    .thenThrow(new RuntimeException("连接拒绝"));
-
             ILotRepository repo = mock(ILotRepository.class);
             // 一个已出清 + 一个可用
             when(repo.findByTempZoneAndExpireDateBefore(eq(TempZone.FRESH), any()))
@@ -98,8 +130,8 @@ class FefoCacheTest {
                             createLot("LOT20260828001103", LotStatus.IN_STOCK, new BigDecimal("500"))
                     ));
 
-            FefoCache cache = new FefoCache(client, repo);
-            List<LotNo> result = cache.getEarliest(TempZone.FRESH, new BigDecimal("300"));
+            FefoCache cache = cacheWithRedisDown(repo);
+            List<LotNo> result = cache.getEarliest(TempZone.FRESH, new BigDecimal("300"), null);
 
             assertEquals(1, result.size());
             assertEquals("LOT20260828001103", result.get(0).value(), "应跳过 FULLY_OUT 批次");
@@ -124,8 +156,9 @@ class FefoCacheTest {
             when(repo.findByTempZoneAndExpireDateBefore(eq(TempZone.FRESH), any()))
                     .thenReturn(List.of(createLot("LOT20260828001104", LotStatus.IN_STOCK, new BigDecimal("500"))));
 
-            FefoCache cache = new FefoCache(client, repo);
-            List<LotNo> result = cache.getEarliest(TempZone.FRESH, new BigDecimal("300"));
+            RedisFefoStrategy redisStrategy = new RedisFefoStrategy(client, repo);
+            FefoCache cache = buildCache(redisStrategy, repo);
+            List<LotNo> result = cache.getEarliest(TempZone.FRESH, new BigDecimal("300"), null);
 
             assertEquals(1, result.size());
             assertEquals("LOT20260828001104", result.get(0).value());
@@ -148,8 +181,9 @@ class FefoCacheTest {
             when(repo.findByTempZoneAndExpireDateBefore(eq(TempZone.FRESH), any()))
                     .thenReturn(List.of(createLot("LOT20260828001106", LotStatus.IN_STOCK, new BigDecimal("500"))));
 
-            FefoCache cache = new FefoCache(client, repo);
-            List<LotNo> result = cache.getEarliest(TempZone.FRESH, new BigDecimal("300"));
+            RedisFefoStrategy redisStrategy = new RedisFefoStrategy(client, repo);
+            FefoCache cache = buildCache(redisStrategy, repo);
+            List<LotNo> result = cache.getEarliest(TempZone.FRESH, new BigDecimal("300"), null);
 
             assertEquals(1, result.size());
             assertEquals("LOT20260828001106", result.get(0).value());
@@ -170,7 +204,8 @@ class FefoCacheTest {
                     .thenThrow(new RuntimeException("连接拒绝"));
             ILotRepository repo = mock(ILotRepository.class);
 
-            FefoCache cache = new FefoCache(client, repo);
+            RedisFefoStrategy redisStrategy = new RedisFefoStrategy(client, repo);
+            FefoCache cache = new FefoCache(mock(FefoStrategyFactory.class), redisStrategy);
             Lot lot = Lot.createNew(
                     LotNo.fromString("LOT20260828001107"), 1001L, TempZone.FRESH,
                     YESTERDAY, IN_7_DAYS, new BigDecimal("500"), 1L
@@ -186,7 +221,8 @@ class FefoCacheTest {
                     .thenThrow(new RuntimeException("连接拒绝"));
             ILotRepository repo = mock(ILotRepository.class);
 
-            FefoCache cache = new FefoCache(client, repo);
+            RedisFefoStrategy redisStrategy = new RedisFefoStrategy(client, repo);
+            FefoCache cache = new FefoCache(mock(FefoStrategyFactory.class), redisStrategy);
             assertDoesNotThrow(() -> cache.removeLot("LOT20260828001108"));
         }
     }

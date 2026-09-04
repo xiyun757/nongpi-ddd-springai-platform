@@ -25,6 +25,7 @@ import org.springframework.transaction.annotation.Transactional;
 import java.math.BigDecimal;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
+import java.util.List;
 import java.util.concurrent.TimeUnit;
 
 /**
@@ -149,11 +150,14 @@ public class LotAppService {
     /**
      * 出库用例 — 委托给 {@link OutboundService}
      */
+    @Transactional(rollbackFor = Exception.class)
     public LotOutboundResult outbound(OutboundCommand cmd) {
         LotOutboundResult result = outboundService.execute(cmd);
 
-        // 写入出库流转记录
-        insertTransferRecord(result.lotNo(), TRANSFER_TYPE_OUTBOUND, result.outQty(), null, cmd.toLocation(), cmd.tempZone());
+        // 逐批写入出库流转记录（FEFO 多批场景审计完整，非只记末批）
+        for (BatchOutbound batch : result.batches()) {
+            insertTransferRecord(batch.lotNo(), TRANSFER_TYPE_OUTBOUND, batch.outQty(), null, cmd.toLocation(), cmd.tempZone());
+        }
 
         return result;
     }
@@ -306,12 +310,29 @@ public class LotAppService {
     ) {}
 
     /**
-     * 出库结果
+     * 单批出库明细 — FEFO 多批出库时每批一条，供审计追溯
      */
-    public record LotOutboundResult(
+    public record BatchOutbound(
             String lotNo,
             BigDecimal outQty,
             BigDecimal remainingQty,
             LotStatus status
     ) {}
+
+    /**
+     * 出库结果
+     * <p>batches 包含每个扣减批次的明细（FEFO 多批场景），单批出库时为单元素列表。</p>
+     */
+    public record LotOutboundResult(
+            String lotNo,
+            BigDecimal outQty,
+            BigDecimal remainingQty,
+            LotStatus status,
+            List<BatchOutbound> batches
+    ) {
+        /** 单批场景紧凑构造器：自动包装为单元素 batches */
+        public LotOutboundResult(String lotNo, BigDecimal outQty, BigDecimal remainingQty, LotStatus status) {
+            this(lotNo, outQty, remainingQty, status, List.of(new BatchOutbound(lotNo, outQty, remainingQty, status)));
+        }
+    }
 }

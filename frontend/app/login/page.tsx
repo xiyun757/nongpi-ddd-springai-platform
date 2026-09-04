@@ -18,7 +18,8 @@ export default function LoginPage() {
 
   useEffect(() => {
     if (!loading && isAuthenticated) {
-      router.replace('/lots');
+      // 登录后跳转仪表盘（根路由 /），不是批次管理页
+      router.replace('/');
     }
   }, [loading, isAuthenticated, router]);
 
@@ -30,7 +31,9 @@ export default function LoginPage() {
     try {
       await login(username, password);
       showSuccess('登录成功');
-      router.replace('/lots');
+      // 不在此处手动 router.replace — login() resolve 时 React 还未 re-render，
+      // isAuthenticated 仍为 false，AuthGuard 会立即跳回 /login 形成跳登录竞态。
+      // 上方 useEffect 监听 isAuthenticated 变化会自动跳转，无需重复。
     } catch (err) {
       const msg = err instanceof Error ? err.message : '用户名或密码错误';
       setErrorMsg(msg);

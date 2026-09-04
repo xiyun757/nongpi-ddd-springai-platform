@@ -109,7 +109,8 @@ public class OutboxMessageRelay implements RabbitTemplate.ConfirmCallback {
                         "timestamp", event.getCreatedAt()
                 );
 
-                String routingKey = event.getEventType();
+                String routingKey = RabbitMQConfig.ROUTING_KEY_PATTERN_PREFIX
+                        + extractSimpleName(event.getEventType());
                 CorrelationData correlationData = new CorrelationData(event.getId().toString());
                 rabbitTemplate.convertAndSend(
                         RabbitMQConfig.EXCHANGE_NAME, routingKey, message, correlationData);
@@ -209,5 +210,16 @@ public class OutboxMessageRelay implements RabbitTemplate.ConfirmCallback {
             log.warn("OutboxRelay: 解析事件 payload 失败, 返回原始字符串", e);
             return Map.of("raw", payload);
         }
+    }
+
+    /**
+     * 从全限定类名提取简单类名：com.nongpi...LotInboundEvent -> LotInboundEvent
+     */
+    private static String extractSimpleName(String eventType) {
+        if (eventType == null) {
+            return "";
+        }
+        int dotIndex = eventType.lastIndexOf('.');
+        return dotIndex >= 0 ? eventType.substring(dotIndex + 1) : eventType;
     }
 }

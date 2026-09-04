@@ -27,9 +27,14 @@ public abstract class BaseAgent {
     protected int maxSteps = 20;
     /** 当前状态 */
     protected AgentState state = AgentState.RUNNING;
+    /** 会话 ID — 用于任务完成后持久化历史到 Redis（manus 模式） */
+    protected String chatId;
+    /** 每步执行结果收集 — 供 onCompleted 持久化完整历史（含 step） */
+    protected final java.util.List<String> stepHistory = new java.util.ArrayList<>();
 
     public void setName(String name) { this.name = name; }
     public void setMaxSteps(int maxSteps) { this.maxSteps = maxSteps; }
+    public void setChatId(String chatId) { this.chatId = chatId; }
 
     /**
      * 单步执行：子类实现（ReActAgent 拆分为 think + act）
@@ -65,9 +70,11 @@ public abstract class BaseAgent {
                     log.info("[{}] 执行第 {} 步", name, stepCounter[0]);
                     String stepResult = step();
                     if (stepResult != null && !stepResult.isBlank()) {
+                        String stepMsg = "Step " + stepCounter[0] + ": " + stepResult;
+                        stepHistory.add(stepMsg);
                         emitter.send(SseEmitter.event()
                                 .name("step")
-                                .data("Step " + stepCounter[0] + ": " + stepResult));
+                                .data(stepMsg));
                     }
                 }
                 if (state == AgentState.RUNNING) {
@@ -88,6 +95,10 @@ public abstract class BaseAgent {
                 } catch (IOException ignored) {}
                 emitter.completeWithError(e);
             } finally {
+                // 任务完成后持久化历史（manus 模式存 Redis）
+                if (chatId != null) {
+                    try { onCompleted(); } catch (Exception ignored) {}
+                }
                 cleanup();
                 // SseEmitter.complete() 幂等，已完成的会静默 return。
                 // finally 兜底确保即使 completeWithError 内部抛异常（如 emitter.send 抛 IOException 后
@@ -105,6 +116,12 @@ public abstract class BaseAgent {
      * 初始化上下文：加入用户初始消息
      */
     protected abstract void initialize(String message);
+
+    /**
+     * 任务完成后的回调钩子 — 子类可重写以持久化历史（如 manus 存 Redis）
+     * 在 finally 块中调用，此时 messageList 已包含完整对话上下文。
+     */
+    protected void onCompleted() { }
 
     /**
      * 清理资源

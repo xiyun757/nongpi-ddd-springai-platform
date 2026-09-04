@@ -34,9 +34,13 @@ public class FefoCache {
     /**
      * 获取最早过期的一批批次号，累计满足 qty 为止
      * <p>委托给策略工厂，工厂优先 Redis ZSet，降级数据库查询。</p>
+     *
+     * @param zone 温区
+     * @param qty  需要凑够的数量
+     * @param skuId SKU（null 不过滤，防止同温区误扣其他 SKU 批次）
      */
-    public List<LotNo> getEarliest(TempZone zone, BigDecimal qty) {
-        return strategyFactory.getStrategy().getEarliest(zone, qty);
+    public List<LotNo> getEarliest(TempZone zone, BigDecimal qty, Long skuId) {
+        return strategyFactory.getStrategy().getEarliest(zone, qty, skuId);
     }
 
     /**

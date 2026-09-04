@@ -22,7 +22,10 @@ export default function AppShell({ children }: { children: ReactNode }) {
     <div className="flex min-h-screen">
       <Sidebar />
       <main className="flex-1 ml-64 p-6 w-[calc(100%-16rem)]">
-        {children}
+        {/* key={pathname}：路由切换时强制重挂载，重放淡入动画（0.28s，全局生效） */}
+        <div key={pathname} className="animate-page-fade">
+          {children}
+        </div>
       </main>
     </div>
   );

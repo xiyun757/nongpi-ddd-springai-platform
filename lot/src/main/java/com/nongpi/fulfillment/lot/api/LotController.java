@@ -1,22 +1,19 @@
 package com.nongpi.fulfillment.lot.api;
 
 import com.baomidou.mybatisplus.core.metadata.IPage;
-import com.nongpi.fulfillment.common.domain.TempZone;
+import com.nongpi.fulfillment.lot.api.dto.InboundRequest;
+import com.nongpi.fulfillment.lot.api.dto.LotInboundResponse;
 import com.nongpi.fulfillment.lot.api.dto.LotResponse;
 import com.nongpi.fulfillment.lot.api.dto.LotTransferResponse;
+import com.nongpi.fulfillment.lot.api.dto.OutboundRequest;
+import com.nongpi.fulfillment.lot.api.dto.TransferRequest;
 import com.nongpi.fulfillment.lot.application.LotAppService;
 import com.nongpi.fulfillment.lot.application.LotAppService.*;
 import com.nongpi.fulfillment.lot.application.LotQueryService;
 import com.nongpi.fulfillment.lot.domain.Lot;
-import com.nongpi.fulfillment.lot.domain.LotNo;
 import jakarta.validation.Valid;
-import jakarta.validation.constraints.DecimalMin;
-import jakarta.validation.constraints.NotBlank;
-import jakarta.validation.constraints.NotNull;
 import org.springframework.web.bind.annotation.*;
 
-import java.math.BigDecimal;
-import java.time.LocalDate;
 import java.util.List;
 
 /**
@@ -56,6 +53,7 @@ public class LotController {
 
     /**
      * 出库
+     * <p>lotNo 可选：传入=指定批次直接出库（批次行按钮），不传=FEFO 自动选最早过期批次。</p>
      */
     @PostMapping("/outbound")
     public LotOutboundResult outbound(@Valid @RequestBody OutboundRequest req) {
@@ -63,7 +61,8 @@ public class LotController {
                 req.skuId(),
                 req.tempZone(),
                 req.qty(),
-                req.toLocation()
+                req.toLocation(),
+                req.lotNo()
         ));
     }
 
@@ -110,45 +109,8 @@ public class LotController {
         return lotQueryService.list(skuId, tempZone, status, lotNo, page, size);
     }
 
-    // ── 响应 / 请求 DTO ──
-
-    public record LotInboundResponse(
-            String lotNo,
-            Long skuId,
-            String tempZone,
-            String produceDate,
-            String expireDate,
-            BigDecimal initialQty,
-            BigDecimal remainingQty,
-            String status,
-            Long supplierId
-    ) {}
-
-    public record InboundRequest(
-            @NotNull(message = "skuId不能为空") Long skuId,
-            @NotNull(message = "tempZone不能为空") TempZone tempZone,
-            @NotNull(message = "生产日期不能为空") LocalDate produceDate,
-            @NotNull(message = "过期日期不能为空") LocalDate expireDate,
-            @NotNull(message = "数量不能为空") @DecimalMin(value = "0.01", message = "数量必须大于0") BigDecimal qty,
-            @NotNull(message = "supplierId不能为空") Long supplierId
-    ) {}
-
-    public record OutboundRequest(
-            @NotNull(message = "skuId不能为空") Long skuId,
-            @NotNull(message = "tempZone不能为空") TempZone tempZone,
-            @NotNull(message = "数量不能为空") @DecimalMin(value = "0.01", message = "数量必须大于0") BigDecimal qty,
-            String toLocation
-    ) {}
-
-    public record TransferRequest(
-            @NotBlank(message = "批次号不能为空") String lotNo,
-            @NotNull(message = "数量不能为空") @DecimalMin(value = "0.01", message = "数量必须大于0") BigDecimal qty,
-            String fromLocation,
-            String toLocation
-    ) {}
-
     /**
-     * 批次出入库记录响应 DTO — 已下沉至 {@link com.nongpi.fulfillment.lot.api.dto.LotTransferResponse}
+     * 批次入库响应转换
      */
     private LotInboundResponse toInboundResponse(Lot lot) {
         return new LotInboundResponse(

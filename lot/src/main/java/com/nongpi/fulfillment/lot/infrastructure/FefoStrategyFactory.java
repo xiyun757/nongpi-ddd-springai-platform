@@ -37,15 +37,15 @@ public class FefoStrategyFactory {
         return this::resolveEarliest;
     }
 
-    private List<LotNo> resolveEarliest(TempZone zone, BigDecimal qty) {
+    private List<LotNo> resolveEarliest(TempZone zone, BigDecimal qty, Long skuId) {
         try {
-            return redisStrategy.getEarliest(zone, qty);
+            return redisStrategy.getEarliest(zone, qty, skuId);
         } catch (FefoStrategyUnavailableException e) {
             log.warn("Redis 策略不可用，降级为数据库查询: {}", e.getMessage());
-            return dbStrategy.getEarliest(zone, qty);
+            return dbStrategy.getEarliest(zone, qty, skuId);
         } catch (Exception e) {
             log.warn("Redis 异常，降级为数据库查询: {}", e.getMessage());
-            return dbStrategy.getEarliest(zone, qty);
+            return dbStrategy.getEarliest(zone, qty, skuId);
         }
     }
 }

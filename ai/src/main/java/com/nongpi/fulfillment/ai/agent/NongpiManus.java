@@ -1,12 +1,27 @@
 package com.nongpi.fulfillment.ai.agent;
 
+import com.fasterxml.jackson.core.type.TypeReference;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import com.nongpi.fulfillment.ai.tools.NongpiToolSet;
 import com.nongpi.fulfillment.ai.tools.TerminateTool;
+import org.redisson.api.RBucket;
+import org.redisson.api.RedissonClient;
+import org.redisson.client.codec.StringCodec;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+import org.springframework.ai.chat.messages.AssistantMessage;
+import org.springframework.ai.chat.messages.Message;
+import org.springframework.ai.chat.messages.UserMessage;
 import org.springframework.ai.chat.model.ChatModel;
 import org.springframework.ai.tool.ToolCallback;
 import org.springframework.ai.support.ToolCallbacks;
 import org.springframework.context.annotation.Scope;
 import org.springframework.stereotype.Component;
+
+import java.time.Duration;
+import java.util.ArrayList;
+import java.util.List;
+import java.util.Map;
 
 /**
  * 农批智能体 — ReAct Manus 的具体配置
@@ -19,6 +34,13 @@ import org.springframework.stereotype.Component;
 @Component
 @Scope("prototype")
 public class NongpiManus extends ToolCallAgent {
+
+    private static final Logger log = LoggerFactory.getLogger(NongpiManus.class);
+    private static final String HISTORY_KEY_PREFIX = "manus:history:";
+    private static final Duration HISTORY_TTL = Duration.ofHours(1);
+
+    private final RedissonClient redissonClient;
+    private final ObjectMapper objectMapper;
 
     private static final String SYSTEM_PROMPT = """
             你是农批履约中台的智能执行体（Manus）。
@@ -36,7 +58,8 @@ public class NongpiManus extends ToolCallAgent {
             如果已有足够信息可以回答用户，直接给出最终回复（不调工具）。
             """;
 
-    public NongpiManus(NongpiToolSet toolSet, TerminateTool terminateTool, ChatModel chatModel) {
+    public NongpiManus(NongpiToolSet toolSet, TerminateTool terminateTool, ChatModel chatModel,
+                       RedissonClient redissonClient, ObjectMapper objectMapper) {
         setName("nongpiManus");
         setMaxSteps(20);
         setChatModel(chatModel);
@@ -44,5 +67,56 @@ public class NongpiManus extends ToolCallAgent {
         setNextStepPrompt(NEXT_STEP_PROMPT);
         // 业务工具 + 终止工具 → ToolCallback[]
         setAvailableTools(ToolCallbacks.from(toolSet, terminateTool));
+        this.redissonClient = redissonClient;
+        this.objectMapper = objectMapper.copy();
+    }
+
+    /**
+     * 任务完成后持久化对话历史到 Redis — 存完整历史：USER 消息 + 每步 STEP + ASSISTANT 最终回复
+     * <p>演示项目需要完整展示 ReAct 过程，step 步骤一并持久化。</p>
+     * <p>追加模式：同一 chatId 多次执行追加到已有历史列表，不覆盖。TTL 1h 自动过期。</p>
+     */
+    @Override
+    protected void onCompleted() {
+        if (chatId == null || messageList.isEmpty()) return;
+        try {
+            // 提取用户原始消息（messageList[1]，跳过 SystemMessage）
+            String userMessage = "";
+            if (messageList.size() > 1 && messageList.get(1) instanceof UserMessage) {
+                userMessage = messageList.get(1).getText();
+            }
+            // 提取最后一条有文本内容的 AssistantMessage
+            String assistantMessage = "";
+            for (int i = messageList.size() - 1; i >= 0; i--) {
+                Message msg = messageList.get(i);
+                if (msg instanceof AssistantMessage && !msg.getText().isBlank()) {
+                    assistantMessage = msg.getText();
+                    break;
+                }
+            }
+            if (assistantMessage.isBlank()) {
+                assistantMessage = "Manus 任务执行完成（无文本回复）";
+            }
+            // 读取已有历史，追加新消息（同一 chatId 多次执行）
+            RBucket<String> bucket = redissonClient.getBucket(HISTORY_KEY_PREFIX + chatId, StringCodec.INSTANCE);
+            String existing = bucket.get();
+            List<Map<String, String>> dtoList;
+            if (existing != null) {
+                dtoList = objectMapper.readValue(existing, new TypeReference<>() {});
+            } else {
+                dtoList = new ArrayList<>();
+            }
+            // 追加完整对话：USER → 每步 STEP → ASSISTANT
+            dtoList.add(Map.of("role", "USER", "content", userMessage));
+            for (String step : stepHistory) {
+                dtoList.add(Map.of("role", "STEP", "content", step));
+            }
+            dtoList.add(Map.of("role", "ASSISTANT", "content", assistantMessage));
+            String json = objectMapper.writeValueAsString(dtoList);
+            bucket.set(json, HISTORY_TTL);
+            log.info("[{}] Manus 历史已持久化 chatId={}, 共{}条消息", name, chatId, dtoList.size());
+        } catch (Exception e) {
+            log.warn("[{}] Manus 历史持久化失败 chatId={}: {}", name, chatId, e.getMessage());
+        }
     }
 }

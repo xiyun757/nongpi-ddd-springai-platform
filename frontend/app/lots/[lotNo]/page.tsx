@@ -29,6 +29,8 @@ import {
 } from '@/lib/api';
 import { formatDateTime } from '@/lib/utils';
 import { SkeletonDetailPage } from '@/components/Skeleton';
+import TransferDialog from '@/components/TransferDialog';
+import { useState } from 'react';
 
 const TRANSFER_TYPE_LABEL: Record<string, string> = {
   INBOUND: '入库',
@@ -55,6 +57,7 @@ function LotDetailPageInner() {
   const params = useParams();
   const router = useRouter();
   const lotNo = String(params?.lotNo ?? '');
+  const [showTransfer, setShowTransfer] = useState(false);
 
   const detailQuery = useQuery({
     queryKey: ['lot-detail', lotNo],
@@ -104,8 +107,8 @@ function LotDetailPageInner() {
   const transfers = transfersQuery.data ?? [];
 
   return (
-    <div>
-      {/* 顶部：批次号 + 状态 */}
+    <div className="animate-fadeIn">
+      {/* 顶部：批次号 + 状态 + 操作 */}
       <div className="flex items-center gap-3 mb-4">
         <h1 className="text-2xl font-bold text-gray-900 font-mono">{lot.lotNo}</h1>
         <span
@@ -115,6 +118,15 @@ function LotDetailPageInner() {
         >
           {STATUS_LABEL[lot.status] ?? lot.status}
         </span>
+        <div className="flex-1" />
+        <Button
+          size="sm"
+          variant="outline"
+          onClick={() => setShowTransfer(true)}
+          disabled={(lot.remainingQty ?? 0) <= 0}
+        >
+          转库
+        </Button>
       </div>
 
       <div className="grid grid-cols-1 lg:grid-cols-5 gap-4">
@@ -215,6 +227,14 @@ function LotDetailPageInner() {
       </div>
 
       <BackButton onClick={() => router.push('/lots')} />
+
+      {/* 转库 Dialog */}
+      <TransferDialog
+        open={showTransfer}
+        onOpenChange={setShowTransfer}
+        lotNo={lot.lotNo}
+        remainingQty={lot.remainingQty ?? 0}
+      />
     </div>
   );
 }

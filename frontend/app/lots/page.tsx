@@ -1,7 +1,7 @@
 'use client';
 
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { fetchLots, inbound, LotItem } from '@/lib/api';
+import { fetchLots, inbound, LotItem, fetchSkus } from '@/lib/api';
 import { useState } from 'react';
 import Link from 'next/link';
 import AuthGuard from '@/components/AuthGuard';
@@ -30,6 +30,12 @@ function LotsPageInner() {
     queryFn: () => fetchLots({ page, size, lotNo: lotNo || undefined, tempZone: tempZone || undefined, status: status || undefined }),
   });
 
+  // 商品主数据下拉（入库表单选择商品，替代手填 skuId 数字）
+  const { data: skus } = useQuery({
+    queryKey: ['skus'],
+    queryFn: fetchSkus,
+  });
+
   const handleSearch = () => {
     setPage(1);
     setLotNo(searchInput.trim());
@@ -46,7 +52,7 @@ function LotsPageInner() {
   const [showForm, setShowForm] = useState(false);
   const [activeLot, setActiveLot] = useState<LotItem | null>(null);
   const [form, setForm] = useState({
-    skuId: 1,
+    skuId: 0, // 提交时若为 0 则取商品列表第一个（下拉框默认选中）
     tempZone: 'FREEZE',
     produceDate: '',
     expireDate: '',
@@ -100,7 +106,7 @@ function LotsPageInner() {
               <label className="block text-xs text-gray-500 mb-1">温区</label>
               <select
                 value={tempZone}
-                onChange={(e) => { setTempZone(e.target.value); setPage(1); }}
+                onChange={(e) => { setTempZone(e.target.value); setSearchInput(''); setLotNo(''); setPage(1); }}
                 className="border rounded px-2 py-1.5 w-full text-sm bg-white"
               >
                 <option value="">全部</option>
@@ -113,7 +119,7 @@ function LotsPageInner() {
               <label className="block text-xs text-gray-500 mb-1">状态</label>
               <select
                 value={status}
-                onChange={(e) => { setStatus(e.target.value); setPage(1); }}
+                onChange={(e) => { setStatus(e.target.value); setSearchInput(''); setLotNo(''); setPage(1); }}
                 className="border rounded px-2 py-1.5 w-full text-sm bg-white"
               >
                 <option value="">全部</option>
@@ -133,13 +139,22 @@ function LotsPageInner() {
           <h2 className="text-base font-semibold mb-3">入库登记</h2>
           <div className="grid grid-cols-2 gap-3">
             <div>
-              <label className="block text-xs text-gray-500 mb-1">SKU ID</label>
-              <input
-                type="number"
+              <label className="block text-xs text-gray-500 mb-1">商品</label>
+              <select
                 value={form.skuId}
                 onChange={(e) => setForm({ ...form, skuId: Number(e.target.value) })}
                 className="border rounded px-2 py-1 w-full text-sm"
-              />
+              >
+                {!skus || skus.length === 0 ? (
+                  <option value={0}>暂无商品，请先创建</option>
+                ) : (
+                  skus.map((s) => (
+                    <option key={s.id} value={s.id}>
+                      {s.name}（ID:{s.id}）
+                    </option>
+                  ))
+                )}
+              </select>
             </div>
             <div>
               <label className="block text-xs text-gray-500 mb-1">温区</label>
@@ -191,8 +206,15 @@ function LotsPageInner() {
             </div>
           </div>
           <button
-            onClick={() => inboundMut.mutate(form)}
-            disabled={inboundMut.isPending || !form.produceDate || !form.expireDate}
+            onClick={() => {
+              // skuId 兜底：默认 0 时取商品列表第一个（下拉默认选中项）
+              const payload = { ...form };
+              if (payload.skuId === 0 && skus && skus.length > 0) {
+                payload.skuId = skus[0].id;
+              }
+              inboundMut.mutate(payload);
+            }}
+            disabled={inboundMut.isPending || !form.produceDate || !form.expireDate || !skus || skus.length === 0}
             className="mt-3 px-4 py-2 bg-green-600 text-white rounded hover:bg-green-700 text-sm disabled:opacity-50"
           >
             {inboundMut.isPending ? '提交中...' : '确认入库'}
@@ -209,7 +231,7 @@ function LotsPageInner() {
           <thead className="bg-gray-50">
             <tr>
               <th className="text-left px-4 py-2">批次号</th>
-              <th className="text-left px-4 py-2">SKU</th>
+              <th className="text-left px-4 py-2">商品</th>
               <th className="text-left px-4 py-2">温区</th>
               <th className="text-right px-4 py-2">初始量</th>
               <th className="text-right px-4 py-2">剩余量</th>
@@ -228,7 +250,11 @@ function LotsPageInner() {
                     {lot.lotNo}
                   </Link>
                 </td>
-                <td className="px-4 py-2">{lot.skuId}</td>
+                <td className="px-4 py-2">
+                  {lot.skuName ?? (
+                    <span className="text-gray-400">SKU {lot.skuId}</span>
+                  )}
+                </td>
                 <td className="px-4 py-2">
                   <StatusBadge variant={(TEMP_ZONE_BADGE[lot.tempZone] ?? { variant: 'gray' }).variant}>
                     {TEMP_ZONE_BADGE[lot.tempZone]?.label ?? lot.tempZone}

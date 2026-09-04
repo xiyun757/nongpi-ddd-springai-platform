@@ -96,9 +96,11 @@ public class LotRepositoryImpl implements ILotRepository {
     @Override
     @Transactional(rollbackFor = Exception.class)
     public void update(Lot lot) {
-        // 1. 乐观锁更新 — 由 MyBatis-Plus @Version 拦截器自动生成
-        //    UPDATE t_lot SET ..., version = version + 1 WHERE lot_no = ? AND version = 旧值
-        //    ⚠ 注意:不能将 entity.version 置 null,拦截器遇到 null 版本号会直接跳过(乐观锁失效)
+        // 乐观锁更新 — 由 MyBatis-Plus @Version 拦截器自动生成
+        // UPDATE t_lot SET ..., version = version + 1 WHERE lot_no = ? AND version = 旧值
+        // ⚠ 注意:不能将 entity.version 置 null,拦截器遇到 null 版本号会直接跳过(乐观锁失效)
+        // TOCTOU 防护:出库路径在 Redisson 分布式锁内调用,锁覆盖 read-modify-write 全程,
+        // 并发同批次出库时 version 必不匹配 → 抛 OptimisticLockException 由上层重试或跳过。
         LotPO po = toPO(lot);
         int rows = lotMapper.updateById(po);
         if (rows == 0) {
@@ -106,10 +108,10 @@ public class LotRepositoryImpl implements ILotRepository {
                     "批次 " + lot.getLotNo().value() + " 已被其他操作修改，请重试");
         }
 
-        // 2. 将 DB 递增后的最新版本号回写聚合根，保持内存状态与持久化一致
+        // 将 DB 递增后的最新版本号回写聚合根，保持内存状态与持久化一致
         lot.syncVersion(po.getVersion());
 
-        // 3. 将新产生的领域事件写入 Outbox
+        // 将新产生的领域事件写入 Outbox
         saveDomainEvents(lot);
     }
 
