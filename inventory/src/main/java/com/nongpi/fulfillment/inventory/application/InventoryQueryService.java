@@ -42,7 +42,7 @@ public class InventoryQueryService {
             wrapper.le(InventoryPO::getTotalQty, maxQty);
         }
         Page<InventoryPO> poPage = inventoryMapper.selectPage(new Page<>(page, size), wrapper);
-        return poPage.convert(InventoryResponse::fromPO);
+        return poPage.convert(InventoryResponse::fromPO);//convert（）将po转为response对象
     }
 
     /**

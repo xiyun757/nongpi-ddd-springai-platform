@@ -156,7 +156,7 @@ public class LotAppService {
 
         // 逐批写入出库流转记录（FEFO 多批场景审计完整，非只记末批）
         for (BatchOutbound batch : result.batches()) {
-            insertTransferRecord(batch.lotNo(), TRANSFER_TYPE_OUTBOUND, batch.outQty(), null, cmd.toLocation(), cmd.tempZone());
+            insertTransferRecord(batch.lotNo(), TRANSFER_TYPE_OUTBOUND, batch.outQty(), null, cmd.toLocation(), batch.tempZone());
         }
 
         return result;
@@ -224,7 +224,8 @@ public class LotAppService {
                         lot.getLotNo().value(),
                         cmd.qty(),
                         lot.getRemainingQty(),
-                        lot.getStatus()
+                        lot.getStatus(),
+                        lot.getTempZone()
                 );
             } finally {
                 if (lock.isHeldByCurrentThread()) {
@@ -316,7 +317,8 @@ public class LotAppService {
             String lotNo,
             BigDecimal outQty,
             BigDecimal remainingQty,
-            LotStatus status
+            LotStatus status,
+            TempZone tempZone
     ) {}
 
     /**
@@ -331,8 +333,8 @@ public class LotAppService {
             List<BatchOutbound> batches
     ) {
         /** 单批场景紧凑构造器：自动包装为单元素 batches */
-        public LotOutboundResult(String lotNo, BigDecimal outQty, BigDecimal remainingQty, LotStatus status) {
-            this(lotNo, outQty, remainingQty, status, List.of(new BatchOutbound(lotNo, outQty, remainingQty, status)));
+        public LotOutboundResult(String lotNo, BigDecimal outQty, BigDecimal remainingQty, LotStatus status, TempZone tempZone) {
+            this(lotNo, outQty, remainingQty, status, List.of(new BatchOutbound(lotNo, outQty, remainingQty, status, tempZone)));
         }
     }
 }

@@ -102,16 +102,20 @@ public class OutboundService {
                 Lot lot = repository.getById(lotNo)
                         .orElseThrow(() -> new IllegalArgumentException("批次不存在: " + cmd.lotNo()));
 
-                // 出库前置校验：温区匹配 + 库存充足 + 未过期（canOutbound 内部执行）
-                lot.outbound(cmd.qty(), cmd.toLocation());
-                repository.update(lot);
+                // 指定批次出库时，SKU 和温区从批次取，不依赖 cmd（防止 LLM 传错 skuId/tempZone）
+                Long lotSkuId = lot.getSkuId();
+                String lotTempZone = lot.getTempZone().name();
 
-                // 事务内原子扣减库存（DB WHERE 条件防超卖）
-                int affected = inventoryMapper.decreaseStock(cmd.skuId(), cmd.tempZone().name(), cmd.qty());
+                // 先扣库存（DB WHERE 条件防超卖），失败则批次不动，避免数据不一致
+                int affected = inventoryMapper.decreaseStock(lotSkuId, lotTempZone, cmd.qty());
                 if (affected == 0) {
                     throw new BusinessException(422, "INSUFFICIENT_QTY",
-                            "可用库存不足：出库 " + cmd.qty() + "，SKU=" + cmd.skuId() + " 温区=" + cmd.tempZone());
+                            "可用库存不足：出库 " + cmd.qty() + "，SKU=" + lotSkuId + " 温区=" + lotTempZone);
                 }
+
+                // 库存扣减成功后再扣批次（canOutbound 内部校验温区匹配+库存充足+未过期）
+                lot.outbound(cmd.qty(), cmd.toLocation());
+                repository.update(lot);
 
                 // 批次出清后，事务提交后再清理 Redis ZSet
                 if (lot.getStatus() == LotStatus.FULLY_OUT) {
@@ -129,7 +133,8 @@ public class OutboundService {
                         lot.getLotNo().value(),
                         cmd.qty(),
                         lot.getRemainingQty(),
-                        lot.getStatus()
+                        lot.getStatus(),
+                        lot.getTempZone()
                 );
             } finally {
                 if (lock.isHeldByCurrentThread()) {
@@ -194,7 +199,7 @@ public class OutboundService {
                     remaining = remaining.subtract(outQty);
                     finalStatus = lot.getStatus();
                     finalLotNo = lot.getLotNo().value();
-                    batches.add(new BatchOutbound(lot.getLotNo().value(), outQty, lot.getRemainingQty(), lot.getStatus()));
+                    batches.add(new BatchOutbound(lot.getLotNo().value(), outQty, lot.getRemainingQty(), lot.getStatus(), lot.getTempZone()));
 
                     // 8. 如果已凑够数量，停止
                     if (remaining.compareTo(BigDecimal.ZERO) <= 0) {
