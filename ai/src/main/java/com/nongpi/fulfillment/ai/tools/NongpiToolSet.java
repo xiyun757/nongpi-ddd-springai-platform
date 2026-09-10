@@ -137,6 +137,15 @@ public class NongpiToolSet {
         if (qty == null || qty.isBlank()) {
             throw new IllegalArgumentException("缺少出库数量 qty，请询问用户要出多少");
         }
+        boolean isFefoMode = (lotNo == null || lotNo.isBlank());
+        if (isFefoMode) {
+            if (skuId == null) {
+                throw new IllegalArgumentException("FEFO 出库模式缺少 SKU 编号，请询问用户要出库哪个商品");
+            }
+            if (tempZone == null || tempZone.isBlank()) {
+                throw new IllegalArgumentException("FEFO 出库模式缺少温区，请询问用户入库到 FREEZE/FRESH/NORMAL 哪个温区");
+            }
+        }
         if (tempZone != null && !tempZone.isBlank()) {
             try {
                 TempZone.valueOf(tempZone.trim().toUpperCase());

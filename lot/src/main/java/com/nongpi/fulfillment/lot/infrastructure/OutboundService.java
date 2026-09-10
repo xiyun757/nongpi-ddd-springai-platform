@@ -151,6 +151,13 @@ public class OutboundService {
      * FEFO 自动选批出库 — 逐批加锁出库直到凑够数量
      */
     private LotOutboundResult outboundByFefo(OutboundCommand cmd) {
+        // 0. 预检：先原子扣减库存（DB WHERE 条件防超卖），失败则批次不动，避免无效锁开销
+        int affected = inventoryMapper.decreaseStock(cmd.skuId(), cmd.tempZone().name(), cmd.qty());
+        if (affected == 0) {
+            throw new BusinessException(422, "INSUFFICIENT_QTY",
+                    "可用库存不足：出库 " + cmd.qty() + "，SKU=" + cmd.skuId() + " 温区=" + cmd.tempZone());
+        }
+
         // 1. 获取 FEFO 批次列表（按 SKU 过滤，防止同温区误扣其他商品批次）
         List<LotNo> lotNos = fefoCache.getEarliest(cmd.tempZone(), cmd.qty(), cmd.skuId());
 
@@ -220,12 +227,11 @@ public class OutboundService {
             throw new NoAvailableLotException("无法完成出库：所有批次加锁失败或无可用批次");
         }
 
-        // 9. 事务内原子扣减库存（DB WHERE 条件防超卖，无需 @Retryable）
-        // (total_qty - frozen_qty) >= ? 在 DB 层校验可用量，避免 TOCTOU 竞态
-        int affected = inventoryMapper.decreaseStock(cmd.skuId(), cmd.tempZone().name(), totalOut);
-        if (affected == 0) {
-            throw new BusinessException(422, "INSUFFICIENT_QTY",
-                    "可用库存不足：出库 " + totalOut + "，SKU=" + cmd.skuId() + " 温区=" + cmd.tempZone());
+        // 9. 预扣的是 cmd.qty()，若实际出库 totalOut < qty（批次不够），回补差额
+        BigDecimal shortfall = cmd.qty().subtract(totalOut);
+        if (shortfall.compareTo(BigDecimal.ZERO) > 0) {
+            inventoryMapper.insertOrIncrease(cmd.skuId(), cmd.tempZone().name(), shortfall);
+            log.warn("FEFO 出库不足，回补库存 {}，SKU={} 温区={}", shortfall, cmd.skuId(), cmd.tempZone());
         }
 
         // 10. 事务提交后清理已出清批次的 Redis ZSet（Redis 资源，崩溃由 Outbox+MQ 消费者补偿）
