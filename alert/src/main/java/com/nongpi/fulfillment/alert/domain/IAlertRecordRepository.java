@@ -24,6 +24,13 @@ public interface IAlertRecordRepository {
     void save(AlertRecord record);
 
     /**
+     * 原子幂等保存：同一批次+同一规则+未处理时只插入一条
+     *
+     * @return true=插入成功，false=已存在跳过
+     */
+    boolean saveIfNotExists(AlertRecord record);
+
+    /**
      * 更新预警记录
      */
     void update(AlertRecord record);

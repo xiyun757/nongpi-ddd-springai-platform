@@ -81,17 +81,7 @@ public class AlertAppService {
                 if (!rule.shouldAlert(lot.getExpireDate())) {
                     continue;
                 }
-                // 避免重复预警：同一批次+同一规则，已有未处理记录则跳过
-                List<AlertRecord> existing = alertRecordRepository.findUnhandledByLotNo(
-                        lot.getLotNo().value());
-                boolean alreadyAlerted = existing.stream()
-                        .anyMatch(r -> r.getAlertRuleId() != null
-                                       && r.getAlertRuleId().equals(rule.getId()));
-                if (alreadyAlerted) {
-                    continue;
-                }
-
-                // 生成预警记录
+                // 生成预警记录（原子幂等：INSERT ... WHERE NOT EXISTS 防止并发 TOCTOU 竞态）
                 long daysLeft = ChronoUnit.DAYS.between(LocalDate.now(), lot.getExpireDate());
                 String message = buildAlertMessage(lot, rule, daysLeft);
                 AlertRecord record = AlertRecord.create(
@@ -100,8 +90,10 @@ public class AlertAppService {
                         rule.getAlertLevel(),
                         message
                 );
-                alertRecordRepository.save(record);
-                alertCount++;
+                boolean inserted = alertRecordRepository.saveIfNotExists(record);
+                if (inserted) {
+                    alertCount++;
+                }
             }
         }
 

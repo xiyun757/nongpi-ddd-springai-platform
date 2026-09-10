@@ -54,6 +54,17 @@ public class AlertRecordRepositoryImpl implements IAlertRecordRepository {
     }
 
     @Override
+    public boolean saveIfNotExists(AlertRecord record) {
+        int rows = alertRecordMapper.insertIfNotExists(
+                record.getLotNo(),
+                record.getAlertRuleId(),
+                record.getAlertLevel().name(),
+                record.getMessage()
+        );
+        return rows > 0;
+    }
+
+    @Override
     public void update(AlertRecord record) {
         AlertRecordPO po = toPO(record);
         alertRecordMapper.updateById(po);
