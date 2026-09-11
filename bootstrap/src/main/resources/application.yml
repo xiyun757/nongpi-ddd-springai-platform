@@ -1,5 +1,10 @@
 server:
   port: 8080
+  tomcat:
+    # JMeter 500 并发压测发现默认线程池(200)导致连接被拒，调大至 400
+    threads:
+      max: 400
+    accept-count: 200
 
 spring:
   application:
